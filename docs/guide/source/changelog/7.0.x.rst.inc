@@ -36,3 +36,17 @@
   :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>efm_ak`) are sized by the
   number of entries the metric holds (``nefmT`` and ``nefmA``), not by the ``ntendon`` and
   ``nactuator`` capacities MuJoCo allocates.
+
+.. rubric:: Bug fixes
+
+- A static link (``MUJOCO_STATIC_LINK_DIR``) now loads OBJ and STL mesh files and reads and
+  writes ``.mjz`` archives. MuJoCo registers those codecs from constructors in objects nothing
+  references, so the linker dropped them: every mesh file failed with "no decoder found" and
+  ``mj_encode`` reported "no encoder found". The ``mujoco`` submodule's static build now carries
+  a table that names them, so a plain archive link keeps them.
+
+.. rubric:: Other changes
+
+- A static link names ``miniz``, the archive library the ``.mjz`` codec needs, and no longer
+  names ``lodepng``, whose objects MuJoCo 3.13.0 folds into ``libmujoco.a``. Rebuild the static
+  libraries from the updated submodule, see :ref:`static_linking`.

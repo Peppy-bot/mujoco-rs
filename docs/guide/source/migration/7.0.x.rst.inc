@@ -15,3 +15,12 @@ mirrors a renamed, a removed or a resized MuJoCo field, and none for a shifted e
 For these changes, see MuJoCo's changelog for this release:
 https://mujoco.readthedocs.io/en/3.13.0/changelog.html
 
+
+Static linking
+-----------------------
+
+A static build needs the libraries of the updated ``mujoco`` submodule
+(``release/3.13.0-static``). Rebuild them as described in :ref:`static_linking`; a ``lib/``
+directory built from the 3.12.0 branch no longer links, because the build script now names
+``miniz`` and no longer names ``lodepng``, and only the updated branch keeps the mesh and
+``.mjz`` codecs in a static link.

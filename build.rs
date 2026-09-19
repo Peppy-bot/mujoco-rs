@@ -246,10 +246,11 @@ fn main() {
         }
 
         println!("cargo::rustc-link-lib=static=mujoco");
-        println!("cargo::rustc-link-lib=static=lodepng");
+        // libmujoco.a holds lodepng's objects; the other dependencies stay separate archives.
         println!("cargo::rustc-link-lib=static=tinyxml2");
         println!("cargo::rustc-link-lib=static=qhullstatic_r");
         println!("cargo::rustc-link-lib=static=ccd");
+        println!("cargo::rustc-link-lib=static=miniz");
 
         if target_os == "linux" {
             println!("cargo::rustc-link-lib=stdc++");
