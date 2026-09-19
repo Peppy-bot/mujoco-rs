@@ -1,4 +1,4 @@
 [submodule "mujoco"]
 	path = mujoco
-	url = https://github.com/davidhozic/mujoco.git
-	branch = feature/non-blocking-loop
+	url = https://github.com/Peppy-bot/mujoco.git
+	branch = release/3.12.0-static
