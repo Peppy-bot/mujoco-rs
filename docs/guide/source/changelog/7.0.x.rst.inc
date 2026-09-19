@@ -37,6 +37,21 @@
   number of entries the metric holds (``nefmT`` and ``nefmA``), not by the ``ntendon`` and
   ``nactuator`` capacities MuJoCo allocates.
 
+*Allocation-free Jacobians*
+
+- |mj_data| gains an allocation-free variant of every Jacobian method, which writes into a buffer
+  that the caller keeps, so a control loop no longer allocates two vectors per call:
+  :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>jac_into` :sup:`new`,
+  :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>jac_body_into` :sup:`new`,
+  :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>jac_body_com_into` :sup:`new`,
+  :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>jac_subtree_com_into`
+  :sup:`new`,
+  :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>jac_geom_into` :sup:`new`,
+  :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>jac_site_into` :sup:`new` and
+  :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>angmom_mat_into` :sup:`new`.
+- The guide gains a :ref:`performance <simulation_performance>` section that covers the thread
+  pool and buffer reuse.
+
 .. rubric:: Bug fixes
 
 - A static link (``MUJOCO_STATIC_LINK_DIR``) now loads OBJ and STL mesh files and reads and
@@ -46,6 +61,11 @@
   a table that names them, so a plain archive link keeps them.
 - A static link with the ``cpp-viewer`` feature links on macOS. The build script names the Apple
   frameworks the static GLFW and Simulate resolve (Cocoa, IOKit, CoreFoundation and CoreVideo).
+- A copy of |mj_model| now shares the layout snapshot of the original even when the original had
+  not built it yet, so
+  :docs-rs:`~~mujoco_rs::wrappers::mj_model::<struct>MjModel::<method>is_compatible_with_model`
+  between the two is a pointer comparison again. The :ref:`mj_rust_viewer` runs that test on
+  every :docs-rs:`~~mujoco_rs::viewer::<struct>MjViewer::<method>sync_data` call.
 
 .. rubric:: Other changes
 
