@@ -4,7 +4,7 @@
 Installation
 =============================
 
-.. _mj_download: https://github.com/google-deepmind/mujoco/releases/tag/3.12.0
+.. _mj_download: https://github.com/google-deepmind/mujoco/releases/tag/3.13.0
 
 
 MuJoCo-rs
@@ -237,14 +237,17 @@ To build statically linkable libraries, perform the following steps:
        cmake -B build -S . -DBUILD_SHARED_LIBS:BOOL=OFF -DMUJOCO_HARDEN:BOOL=OFF -DCMAKE_BUILD_TYPE:STRING=Release -DCMAKE_INTERPROCEDURAL_OPTIMIZATION:BOOL=OFF -DMUJOCO_BUILD_EXAMPLES:BOOL=OFF -DMUJOCO_BUILD_TESTS:BOOL=OFF
        cmake --build build --parallel --target glfw libmujoco_simulate --config=Release
 
-   This was tested with the ``gcc`` compiler.
+   MuJoCo compiles with ``-Werror``, and ``gcc`` 11 (Ubuntu 22.04) stops on a false
+   uninitialized read it reports in the continuous collision code. ``clang`` compiles it;
+   pass ``-DCMAKE_C_COMPILER:STRING=clang -DCMAKE_CXX_COMPILER:STRING=clang++`` to the
+   configuration command above to select it, as this repository's CI does.
 
    Note that ``-DCMAKE_INTERPROCEDURAL_OPTIMIZATION:BOOL=OFF`` **disables link-time optimization**, thus resulting in slightly
    lower performance. Enabling it causes compatibility problems on the Linux platform. See the attention block below for more info.
 
    .. seealso::
 
-        See this `Dockerfile <https://github.com/davidhozic/mujoco-rs/blob/v6.0.x/Dockerfile.ubuntu>`_
+        See this `Dockerfile <https://github.com/davidhozic/mujoco-rs/blob/v7.0.x/Dockerfile.ubuntu>`_
         for a reproducible build environment which, to our knowledge, matches MuJoCo's official
         build environment.
         The Dockerfile includes commented-out commands for installing the Rust toolchain and

@@ -1,6 +1,8 @@
 name: Test MuJoCo-rs (OpenGL included)
 
 on:
+  push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
   release:
@@ -8,6 +10,10 @@ on:
 
 permissions:
   contents: read
+
+concurrency:
+  group: tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -99,3 +105,149 @@ jobs:
       - name: Run a rendering test
         if: contains(matrix.features, 'renderer') && runner.os == 'Linux'
         run: cargo run --release --example renderer --features ${{env.MJRS_FEATURES}} --no-default-features
+
+  # The matrix above links the official MuJoCo binaries. This job links the
+  # `mujoco` submodule statically instead: it is the only build that exercises
+  # the fork's static-linking patch, the C interface the `cpp-viewer` feature
+  # links (`libsimulate.a` and `libglfw3.a`, which no MuJoCo release ships) and
+  # the table that keeps the mesh and .mjz codecs in an archive link.
+  #
+  # It runs on a self-hosted box because the MuJoCo build and the target
+  # directory persist there between runs, so a warm run compiles what the
+  # change touched and nothing else. The box carries a Rust toolchain, docker
+  # and Mesa's EGL libraries (provisioned by the Peppy superproject's
+  # scripts/setup_machine.sh --ci-runner) and nothing MuJoCo's build needs, so
+  # MuJoCo is compiled inside the image `Dockerfile.ubuntu` defines, the build
+  # environment the static-linking guide documents. Only the static archives
+  # cross back to the host; cargo, the tests and the renderer run on it.
+  static-link:
+    name: "Test static link against the mujoco submodule with every feature"
+    runs-on: self-hosted
+    # A cold run builds MuJoCo, GLFW and every cargo dependency from scratch.
+    timeout-minutes: 90
+
+    env:
+      RUST_BACKTRACE: "1"
+      # Every feature a static link supports; `auto-download-mujoco` is the
+      # matrix's concern and `ffi-regenerate` rewrites the committed bindings.
+      MJRS_STATIC_FEATURES: "renderer renderer-winit-fallback viewer-ui cpp-viewer"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # The static link builds the submodule; the matrix never checks it out.
+          submodules: true
+          # Nothing here pushes, so no later step needs a writable credential
+          # sitting in .git/config.
+          persist-credentials: false
+
+      # The runner executes steps in a shell that is neither a login nor an
+      # interactive one, so rustup's profile edit is never sourced and cargo
+      # has to be named on $GITHUB_PATH. Naming what is missing here keeps a
+      # provisioning gap from surfacing minutes later as a build error.
+      - name: Check the host's toolchain
+        run: |
+          set -euo pipefail
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.cargo/bin:$PATH"
+          missing=()
+          for tool in rustc cargo docker; do
+            command -v "$tool" > /dev/null || missing+=("$tool")
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            list=$(printf '%s, ' "${missing[@]}")
+            echo "::error::${RUNNER_NAME:-this host} is missing ${list%, }." \
+              "Self-hosted boxes are provisioned with the Peppy superproject's" \
+              "scripts/setup_machine.sh --ci-runner."
+            exit 1
+          fi
+          rustc --version
+          docker --version
+
+      # The box is reused, so a directory under $HOME outlives the job; nothing
+      # mounts or uploads it. It holds MuJoCo's cmake build tree and the cargo
+      # target directory, both rebuilt from scratch by their tools, so nothing
+      # in it is state one run depends on another having written. The name
+      # carries the architecture because every artifact in it is built for the
+      # host that built it, and the month because neither cmake nor cargo
+      # removes an artifact a dependency bump superseded: the first run of a
+      # month starts cold and the previous month's directory is pruned.
+      - name: Name the cache this run reuses
+        id: cache
+        run: |
+          set -euo pipefail
+          root="$HOME/.cache/mujoco-rs-ci"
+          prefix="static-link-$RUNNER_ARCH-"
+          keep="$root/$prefix$(date -u +%Y-%m)"
+          mkdir -p "$keep"
+          for dir in "$root/$prefix"*; do
+            if [ -d "$dir" ] && [ "$dir" != "$keep" ]; then
+              echo "Pruning stale cache $dir"
+              rm -rf "$dir"
+            fi
+          done
+          echo "dir=$keep" >> "$GITHUB_OUTPUT"
+
+      # The configuration is the one the static-linking guide gives, run inside
+      # the image the guide points at with the clang the image installs: MuJoCo
+      # compiles with -Werror, and the image's gcc 11 reports a false
+      # uninitialized read in the continuous collision code that clang does
+      # not. The source and build trees are mounted at fixed paths because
+      # cmake records absolute paths in its cache, so a later run reuses the
+      # tree only if it sees them at the same place. The build runs as the
+      # runner's own user so the cache stays prunable from the host; git, which
+      # cmake fetches GLFW and the other dependencies with, wants a writable
+      # HOME for that user.
+      - name: Build MuJoCo's static libraries in the documented image
+        run: |
+          set -euo pipefail
+          image=mujoco-rs-static-build
+          docker build --quiet --tag "$image" - < Dockerfile.ubuntu
+          build="${{ steps.cache.outputs.dir }}/mujoco-build"
+          mkdir -p "$build"
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            --env HOME=/tmp \
+            --volume "$GITHUB_WORKSPACE/mujoco:/src:ro" \
+            --volume "$build:/build" \
+            "$image" bash -euo pipefail -c '
+              cmake -S /src -B /build -G Ninja \
+                -DCMAKE_C_COMPILER:STRING=clang-13 \
+                -DCMAKE_CXX_COMPILER:STRING=clang++-13 \
+                -DBUILD_SHARED_LIBS:BOOL=OFF \
+                -DMUJOCO_HARDEN:BOOL=OFF \
+                -DCMAKE_BUILD_TYPE:STRING=Release \
+                -DCMAKE_INTERPROCEDURAL_OPTIMIZATION:BOOL=OFF \
+                -DMUJOCO_BUILD_EXAMPLES:BOOL=OFF \
+                -DMUJOCO_BUILD_TESTS:BOOL=OFF
+              cmake --build /build --parallel --target glfw libmujoco_simulate --config=Release
+            '
+          echo "MUJOCO_STATIC_LINK_DIR=$build/lib" >> "$GITHUB_ENV"
+
+      # The target directory is redirected through a symlink so every path
+      # stays where cargo and the examples expect it. Incremental compilation
+      # is off: its caches are most of a debug target directory and all they
+      # would save is the seconds a warm rebuild of the crate's own code takes.
+      - name: Link the target directory to the cache
+        run: |
+          set -euo pipefail
+          store="${{ steps.cache.outputs.dir }}/target"
+          mkdir -p "$store"
+          ln -sfn "$store" target
+          echo "CARGO_INCREMENTAL=0" >> "$GITHUB_ENV"
+          du -sh "${{ steps.cache.outputs.dir }}"/* 2>/dev/null || true
+
+      - name: Generate Cargo.lock
+        run: cargo generate-lockfile
+
+      # `cargo test` builds every example too, so the `cpp-viewer` example is
+      # what proves the C interface links; the box has no display to run it.
+      - name: cargo test (debug)
+        run: cargo test --features "$MJRS_STATIC_FEATURES"
+
+      - name: cargo test (release)
+        run: cargo test --release --features "$MJRS_STATIC_FEATURES"
+
+      - name: Run a rendering test
+        run: cargo run --release --example renderer --features "$MJRS_STATIC_FEATURES"

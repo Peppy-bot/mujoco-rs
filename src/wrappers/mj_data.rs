@@ -1135,6 +1135,27 @@ impl<M: ModelType> MjData<M> {
         })
     }
 
+    /// Returns whether `point` (global coordinates) lies inside the site; a mesh site tests its
+    /// convex hull. Wraps [`mj_insideSite`].
+    /// # Panics
+    /// Panics when `site_id` is `>= nsite`. Use [`MjData::try_inside_site`] for a fallible alternative.
+    pub fn inside_site(&self, site_id: usize, point: &[MjtNum; 3]) -> bool {
+        self.try_inside_site(site_id, point).unwrap()
+    }
+
+    /// Fallible version of [`MjData::inside_site`].
+    /// # Errors
+    /// Returns [`MjDataError::IndexOutOfBounds`] when `site_id` is `>= nsite`.
+    pub fn try_inside_site(&self, site_id: usize, point: &[MjtNum; 3]) -> Result<bool, MjDataError> {
+        let nsite = self.model.ffi().nsite;
+        if site_id >= nsite as usize {
+            return Err(MjDataError::IndexOutOfBounds { kind: "site_id", id: site_id, upper: nsite as usize });
+        }
+        // SAFETY: the site id is bounded above and the point is a valid 3-array.
+        let inside = unsafe { mj_insideSite(self.model.ffi(), self.ffi(), site_id as i32, point) };
+        Ok(inside != 0)
+    }
+
     /// Map from body local to global Cartesian coordinates. Returns (global position, global orientation matrix).
     /// `sameframe` takes values from [`MjtSameFrame`]. Wraps `mj_local2Global`.
     /// # Panics
@@ -1667,6 +1688,9 @@ impl<M: ModelType> MjData<M> {
         [ffi] nefc: i32; "number of constraints.";
         [ffi] nJ: i32; "number of non-zeros in constraint Jacobian.";
         [ffi] nefmK: i32; "number of non-zeros in effective-stiffness CSR.";
+        [ffi] nefmcon: i32; "packed length of the contact rank-1 rows.";
+        [ffi] nefmT: i32; "number of tendons with terms in the metric.";
+        [ffi] nefmA: i32; "number of actuators with terms in the metric.";
         [ffi] nefmdof: i32; "number of 3x3 blocks in the effective-metric preconditioner.";
         [ffi] nefmL: i32; "size of the effective-metric block storage (9*nefmdof).";
         [ffi] nY: i32; "number of non-zeros in constraint inverse inertia square root.";
@@ -1958,11 +1982,24 @@ impl<M: ModelType> MjData<M> {
         (read = unsafe) efc_vel: &[MjtNum; "velocity in constraint space: J*qvel"; ffi().nefc],
         (read = unsafe) efc_aref: &[MjtNum; "reference pseudo-acceleration"; ffi().nefc],
         efm_c: &[MjtNum; "smooth-force shift h*K*qvel"; model.ffi().nv],
+        (read = unsafe) efm_diag: &[MjtNum; "effective-metric diagonal h*D + h^2*K"; model.ffi().nv],
+        efm_ck: &[MjtNum; "diagonal stiffness h*k, for the smooth shift"; model.ffi().nv],
+        (read = unsafe) efm_sdiag: &[MjtNum; "diagonal additions to M in the backbone"; model.ffi().nv],
+        (read = unsafe) efm_fluid: &[MjtNum; "fluid drag blocks in M's sparsity pattern"; model.ffi().nC],
+        (mut = unsafe) efm_tid: &[i32; "ids of tendons with terms in the metric"; ffi().nefmT],
+        (read = unsafe) efm_ts: &[MjtNum; "tendon metric scale h^2*k + h*b, tid indexed"; ffi().nefmT],
+        (read = unsafe) efm_tk: &[MjtNum; "tendon stiffness h*k for shift, tid indexed"; ffi().nefmT],
+        (mut = unsafe) efm_aid: &[i32; "ids of actuators with terms in the metric"; ffi().nefmA],
+        efm_as: &[MjtNum; "actuator metric scale h^2*gp + h*gv, aid indexed"; ffi().nefmA],
+        efm_ak: &[MjtNum; "actuator stiffness h*gp, aid indexed"; ffi().nefmA],
+        efm_ca: &[MjtNum; "actuation-stage smooth-force shift"; model.ffi().nv],
         (mut = unsafe) efm_K_rownnz: &[i32; "effective-stiffness CSR row nonzeros"; model.ffi().nv],
         (mut = unsafe) efm_K_rowadr: &[i32; "effective-stiffness CSR row addresses"; model.ffi().nv],
         (mut = unsafe) efm_K_colind: &[i32; "effective-stiffness CSR column indices"; ffi().nefmK],
         efm_K_val: &[MjtNum; "effective-stiffness CSR values"; ffi().nefmK],
         (mut = unsafe) efm_dofid: &[i32; "block k -> dof address of its vertex triple"; ffi().nefmdof],
+        (mut = unsafe) efm_con_ind: &[i32; "contact rank-1 rows, packed [nnz, colind...]"; ffi().nefmcon],
+        efm_con_val: &[MjtNum; "contact rank-1 rows, packed [scale, val...]"; ffi().nefmcon],
         efm_L: &[MjtNum; "factored 3x3 diagonal blocks of M+K"; ffi().nefmL],
         (read = unsafe) efc_b: &[MjtNum; "linear cost term: J*qacc_smooth - aref"; ffi().nefc],
         (read = unsafe) iefc_aref: &[MjtNum; "reference pseudo-acceleration"; ffi().nefc],
@@ -5281,6 +5318,97 @@ mod test {
 
         // SAFETY: the loop above ran the full pipeline, so every arena array holds computed values.
         unsafe { data.probe_dynamic_arrays_unsafe() };
+    }
+
+    /// A box site and a mesh site (a tetrahedron hull) with a point placed on each side of
+    /// their boundaries.
+    #[test]
+    fn test_inside_site() {
+        const SITE_MODEL: &str = "
+<mujoco>
+  <asset>
+    <mesh name='tet' vertex='0 0 0  1 0 0  0 1 0  0 0 1'/>
+  </asset>
+  <worldbody>
+    <site name='box' type='box' size='.5 .5 .5' pos='2 0 0'/>
+    <site name='hull' type='mesh' mesh='tet' pos='-2 0 0'/>
+  </worldbody>
+</mujoco>";
+        let model = MjModel::from_xml_string(SITE_MODEL).unwrap();
+        let mut data = model.make_data();
+        data.forward();
+
+        let box_id = model.name_to_id(MjtObj::mjOBJ_SITE, "box").unwrap();
+        assert!(data.inside_site(box_id, &[2.4, 0.4, -0.4]));
+        assert!(!data.inside_site(box_id, &[2.6, 0.0, 0.0]));
+
+        // The hull is x + y + z <= 1 in the site frame, so (.2, .2, .2) is inside and (.4, .4, .4)
+        // lies outside the sloped face while still inside the vertices' bounding box.
+        let hull_id = model.name_to_id(MjtObj::mjOBJ_SITE, "hull").unwrap();
+        assert!(data.inside_site(hull_id, &[-1.8, 0.2, 0.2]));
+        assert!(!data.inside_site(hull_id, &[-1.6, 0.4, 0.4]));
+
+        assert!(matches!(
+            data.try_inside_site(2, &[0.0; 3]),
+            Err(MjDataError::IndexOutOfBounds { kind: "site_id", id: 2, upper: 2 })
+        ));
+    }
+
+    /// Under `integrator="discrete"` a stretched stiff tendon and a position actuator each join
+    /// the effective metric, so the tendon and actuator lists hold exactly those ids.
+    #[test]
+    fn test_effective_metric_lists() {
+        const DISCRETE_MODEL: &str = "
+<mujoco>
+  <option integrator='discrete' timestep='.01'/>
+  <worldbody>
+    <body pos='0 0 1'>
+      <joint name='free' type='free'/>
+      <geom size='.1'/>
+      <site name='a' pos='.1 0 0'/>
+    </body>
+    <body pos='1 0 1'>
+      <joint name='hinge' type='hinge' axis='0 1 0'/>
+      <geom size='.1'/>
+      <site name='b' pos='-.1 0 0'/>
+    </body>
+  </worldbody>
+  <tendon>
+    <spatial name='slack' stiffness='0'><site site='a'/><site site='b'/></spatial>
+    <spatial name='stiff' stiffness='100' springlength='0'><site site='a'/><site site='b'/></spatial>
+  </tendon>
+  <actuator>
+    <motor name='motor' joint='hinge'/>
+    <position name='servo' joint='hinge' kp='50'/>
+  </actuator>
+</mujoco>";
+        let model = MjModel::from_xml_string(DISCRETE_MODEL).unwrap();
+        let mut data = model.make_data();
+        assert!(!data.efm_active());
+        assert!(data.efm_tid().is_empty());
+        assert!(data.efm_aid().is_empty());
+
+        data.forward();
+        assert!(data.efm_active());
+        let stiff = model.name_to_id(MjtObj::mjOBJ_TENDON, "stiff").unwrap();
+        assert_eq!(data.nefm_t(), 1);
+        assert_eq!(data.efm_tid(), &[stiff as i32]);
+        // SAFETY: forward() ran the velocity stage that fills the tendon metric terms.
+        let (ts, tk) = unsafe { (data.efm_ts(), data.efm_tk()) };
+        let h = model.opt().timestep;
+        assert_relative_eq!(tk[0], h * 100.0, epsilon=1e-12);
+        assert_relative_eq!(ts[0], h * h * 100.0, epsilon=1e-12);
+
+        let servo = model.name_to_id(MjtObj::mjOBJ_ACTUATOR, "servo").unwrap();
+        assert_eq!(data.nefm_a(), 1);
+        assert_eq!(data.efm_aid(), &[servo as i32]);
+        assert_relative_eq!(data.efm_ak()[0], h * 50.0, epsilon=1e-12);
+        assert_eq!(data.efm_as().len(), 1);
+        assert_eq!(data.efm_ca().len(), model.nv() as usize);
+        assert_eq!(data.efm_ck().len(), model.nv() as usize);
+        assert_eq!(data.nefmcon(), 0);
+        assert!(data.efm_con_ind().is_empty());
+        assert!(data.efm_con_val().is_empty());
     }
 
 }

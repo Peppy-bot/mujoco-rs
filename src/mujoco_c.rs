@@ -43,10 +43,10 @@ impl<T> ::std::cmp::PartialEq for __BindgenUnionField<T> {
     }
 }
 impl<T> ::std::cmp::Eq for __BindgenUnionField<T> {}
-pub const mjVERSION_HEADER: u32 = 3012000;
+pub const mjVERSION_HEADER: u32 = 3013000;
 pub const mjMINVAL: f64 = 0.000000000000001;
-pub const mjPI: f64 = 3.141592653589793;
 pub const mjMAXVAL: f64 = 10000000000.0;
+pub const mjPI: f64 = 3.141592653589793;
 pub const mjMINMU: f64 = 0.00001;
 pub const mjMINIMP: f64 = 0.0001;
 pub const mjMAXIMP: f64 = 0.9999;
@@ -242,6 +242,7 @@ pub enum mjtIntegrator {
     mjINT_RK4 = 1,
     mjINT_IMPLICIT = 2,
     mjINT_IMPLICITFAST = 3,
+    mjINT_DISCRETE = 4,
 }
 #[repr(u32)]
 #[derive(Debug, Clone, Hash, PartialEq, Eq,  Copy)]
@@ -1057,6 +1058,7 @@ pub struct mjModel_ {
     pub geom_rgba: *mut f32,
     pub site_type: *mut ::std::os::raw::c_int,
     pub site_bodyid: *mut ::std::os::raw::c_int,
+    pub site_dataid: *mut ::std::os::raw::c_int,
     pub site_matid: *mut ::std::os::raw::c_int,
     pub site_group: *mut ::std::os::raw::c_int,
     pub site_sameframe: *mut mjtByte,
@@ -1528,6 +1530,9 @@ pub struct mjData_ {
     pub nJ: ::std::os::raw::c_int,
     pub efm_active: ::std::os::raw::c_int,
     pub nefmK: ::std::os::raw::c_int,
+    pub nefmcon: ::std::os::raw::c_int,
+    pub nefmT: ::std::os::raw::c_int,
+    pub nefmA: ::std::os::raw::c_int,
     pub nefmdof: ::std::os::raw::c_int,
     pub nefmL: ::std::os::raw::c_int,
     pub nY: ::std::os::raw::c_int,
@@ -1691,11 +1696,24 @@ pub struct mjData_ {
     pub efc_vel: *mut mjtNum,
     pub efc_aref: *mut mjtNum,
     pub efm_c: *mut mjtNum,
+    pub efm_diag: *mut mjtNum,
+    pub efm_ck: *mut mjtNum,
+    pub efm_sdiag: *mut mjtNum,
+    pub efm_fluid: *mut mjtNum,
+    pub efm_tid: *mut ::std::os::raw::c_int,
+    pub efm_ts: *mut mjtNum,
+    pub efm_tk: *mut mjtNum,
+    pub efm_aid: *mut ::std::os::raw::c_int,
+    pub efm_as: *mut mjtNum,
+    pub efm_ak: *mut mjtNum,
+    pub efm_ca: *mut mjtNum,
     pub efm_K_rownnz: *mut ::std::os::raw::c_int,
     pub efm_K_rowadr: *mut ::std::os::raw::c_int,
     pub efm_K_colind: *mut ::std::os::raw::c_int,
     pub efm_K_val: *mut mjtNum,
     pub efm_dofid: *mut ::std::os::raw::c_int,
+    pub efm_con_ind: *mut ::std::os::raw::c_int,
+    pub efm_con_val: *mut mjtNum,
     pub efm_L: *mut mjtNum,
     pub efc_b: *mut mjtNum,
     pub iefc_aref: *mut mjtNum,
@@ -2049,6 +2067,7 @@ pub struct mjsSite_ {
     pub(crate) material: *mut mjString,
     pub(crate) group: ::std::os::raw::c_int,
     pub(crate) rgba: [f32; 4usize],
+    pub(crate) meshname: *mut mjString,
     pub(crate) userdata: *mut mjDoubleVec,
     pub(crate) info: *mut mjString,
 }
@@ -4268,6 +4287,14 @@ unsafe extern "C" {
         distmax: mjtNum,
         fromto: *mut [mjtNum; 6usize],
     ) -> mjtNum;
+}
+unsafe extern "C" {
+    pub fn mj_insideSite(
+        m: *const mjModel,
+        d: *const mjData,
+        siteid: ::std::os::raw::c_int,
+        point: *const [mjtNum; 3usize],
+    ) -> ::std::os::raw::c_int;
 }
 unsafe extern "C" {
     pub fn mj_contactForce(
