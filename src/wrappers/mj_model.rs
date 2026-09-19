@@ -1417,6 +1417,7 @@ impl MjModel {
         geom_rgba: &[[f32; 4] [force]; "rgba when material is omitted"; ffi().ngeom],
         site_type: &[MjtGeom [force]; "geom type for rendering"; ffi().nsite],
         (mut = unsafe) site_bodyid: &[i32; "id of site's body"; ffi().nsite],
+        (mut = unsafe) site_dataid: &[i32; "id of site's mesh; -1: none"; ffi().nsite],
         (mut = unsafe) site_matid: &[i32; "material id for rendering; -1: none"; ffi().nsite],
         site_group: &[i32; "group for visibility"; ffi().nsite],
         site_sameframe: &[MjtSameFrame [force]; "same frame as body"; ffi().nsite],

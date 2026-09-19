@@ -814,6 +814,7 @@ impl MjsSite {
     userdata_method!(f64);
 
     string_set_get_with! {[&]
+        meshname; "mesh attached to site.";
         material; "name of material.";
     }
 }
@@ -4138,5 +4139,25 @@ mod tests {
         // The world body stays, so the body list never empties.
         assert!(unsafe { spec.world_body_mut().body_iter_mut().last().unwrap().delete() }.is_ok(), "body");
         assert_eq!(spec.body_iter().count(), 1);
+    }
+
+    /// A site that names a mesh compiles to that mesh's id in `site_dataid`; a site without one
+    /// compiles to -1.
+    #[test]
+    fn test_site_mesh() {
+        let mut spec = MjSpec::new();
+        spec.add_mesh().with_name("tet")
+            .set_uservert(&[0.0, 0.0, 0.0,  1.0, 0.0, 0.0,  0.0, 1.0, 0.0,  0.0, 0.0, 1.0]);
+        let world = spec.world_body_mut();
+        world.add_site().with_name("plain");
+        let hull = world.add_site().with_name("hull").with_type(MjtGeom::mjGEOM_MESH).with_meshname("tet");
+        assert_eq!(hull.meshname(), "tet");
+
+        let model = spec.compile().unwrap();
+        let tet = model.name_to_id(MjtObj::mjOBJ_MESH, "tet").unwrap() as i32;
+        let plain = model.name_to_id(MjtObj::mjOBJ_SITE, "plain").unwrap();
+        let hull = model.name_to_id(MjtObj::mjOBJ_SITE, "hull").unwrap();
+        assert_eq!(model.site_dataid()[plain], -1);
+        assert_eq!(model.site_dataid()[hull], tet);
     }
 }
