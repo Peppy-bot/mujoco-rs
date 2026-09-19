@@ -44,6 +44,8 @@
   references, so the linker dropped them: every mesh file failed with "no decoder found" and
   ``mj_encode`` reported "no encoder found". The ``mujoco`` submodule's static build now carries
   a table that names them, so a plain archive link keeps them.
+- A static link with the ``cpp-viewer`` feature links on macOS. The build script names the Apple
+  frameworks the static GLFW and Simulate resolve (Cocoa, IOKit, CoreFoundation and CoreVideo).
 
 .. rubric:: Other changes
 

@@ -243,6 +243,14 @@ fn main() {
         {
             println!("cargo::rustc-link-lib=static=simulate");
             println!("cargo::rustc-link-lib=static=glfw3");
+            // The static GLFW resolves Cocoa, IOKit and CoreFoundation, and Simulate drives
+            // its display link through CoreVideo. On Linux GLFW loads X11 and Wayland at run
+            // time, so nothing beyond libc is named there.
+            if target_os == "macos" {
+                for framework in ["Cocoa", "IOKit", "CoreFoundation", "CoreVideo"] {
+                    println!("cargo::rustc-link-lib=framework={framework}");
+                }
+            }
         }
 
         println!("cargo::rustc-link-lib=static=mujoco");
