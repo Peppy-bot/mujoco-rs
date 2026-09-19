@@ -738,8 +738,9 @@ impl MjModel {
     pub fn try_clone(&self) -> Result<MjModel, MjModelError> {
         let ptr = unsafe { mj_copyModel(ptr::null_mut(), self.ffi()) };
         NonNull::new(ptr)
-            // The copy holds the same sizes and the same tables, so it reuses the snapshot.
-            .map(|ptr| MjModel { ptr, layout: self.layout.clone() })
+            // The copy holds the same sizes and the same tables, so it shares the snapshot: a
+            // compatibility test between the two is then a pointer comparison.
+            .map(|ptr| MjModel { ptr, layout: OnceLock::from(Arc::clone(self.layout())) })
             .ok_or(MjModelError::AllocationFailed)
     }
 
@@ -4519,5 +4520,14 @@ mod tests {
 
         // SAFETY: no accessor of this block needs a pipeline stage; the compiler fills the model.
         unsafe { model.probe_dynamic_arrays_unsafe() };
+    }
+
+    /// A copy made before the layout snapshot exists must still share it, so that a compatibility
+    /// test between the copy and the original stays a pointer comparison.
+    #[test]
+    fn test_clone_shares_layout_snapshot() {
+        let model = MjModel::from_xml_string(EXAMPLE_MODEL).unwrap();
+        let copy = model.clone();
+        assert!(Arc::ptr_eq(model.layout(), copy.layout()));
     }
 }

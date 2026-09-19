@@ -850,22 +850,26 @@ impl<M: ModelType> MjData<M> {
     /// # Errors
     /// Returns [`MjDataError::IndexOutOfBounds`] when `body_id` is `>= nbody`.
     pub fn try_jac(&self, jacp: bool, jacr: bool, point: &[MjtNum; 3], body_id: usize) -> Result<(Vec<MjtNum>, Vec<MjtNum>), MjDataError> {
+        let mut jacp_vec = if jacp { self.jac_vec() } else { Vec::new() };
+        let mut jacr_vec = if jacr { self.jac_vec() } else { Vec::new() };
+        self.jac_into(jacp.then_some(jacp_vec.as_mut_slice()), jacr.then_some(jacr_vec.as_mut_slice()), point, body_id)?;
+        Ok((jacp_vec, jacr_vec))
+    }
+
+    /// Same as [`MjData::jac`], except it writes each Jacobian as a row-major `3 x nv` matrix
+    /// into a caller-provided buffer; `None` skips that Jacobian. Elements of a buffer above
+    /// index `3 * nv` keep their previous values. Wraps [`mj_jac`].
+    /// # Errors
+    /// - [`MjDataError::IndexOutOfBounds`] when `body_id >= nbody`.
+    /// - [`MjDataError::BufferTooSmall`] when a given buffer holds fewer than `3 * nv` elements.
+    pub fn jac_into(&self, jacp: Option<&mut [MjtNum]>, jacr: Option<&mut [MjtNum]>, point: &[MjtNum; 3], body_id: usize) -> Result<(), MjDataError> {
         let nbody = self.model.ffi().nbody;
         if body_id >= nbody as usize {
             return Err(MjDataError::IndexOutOfBounds { kind: "body_id", id: body_id, upper: nbody as usize });
         }
-        let required_len = 3 * self.model.ffi().nv as usize;
-        let mut jacp_vec = if jacp { vec![0 as MjtNum; required_len] } else { vec![] };
-        let mut jacr_vec = if jacr { vec![0 as MjtNum; required_len] } else { vec![] };
-        unsafe {
-            mj_jac(
-                self.model.ffi(), self.ffi(),
-                if jacp { jacp_vec.as_mut_ptr() } else { ptr::null_mut() },
-                if jacr { jacr_vec.as_mut_ptr() } else { ptr::null_mut() },
-                point, body_id as i32,
-            )
-        };
-        Ok((jacp_vec, jacr_vec))
+        let (jacp, jacr) = (self.jac_pointer("jacp", jacp)?, self.jac_pointer("jacr", jacr)?);
+        unsafe { mj_jac(self.model.ffi(), self.ffi(), jacp, jacr, point, body_id as i32) };
+        Ok(())
     }
 
     /// Compute body frame end-effector Jacobian.
@@ -881,22 +885,26 @@ impl<M: ModelType> MjData<M> {
     /// # Errors
     /// Returns [`MjDataError::IndexOutOfBounds`] when `body_id` is out of range.
     pub fn try_jac_body(&self, jacp: bool, jacr: bool, body_id: usize) -> Result<(Vec<MjtNum>, Vec<MjtNum>), MjDataError> {
+        let mut jacp_vec = if jacp { self.jac_vec() } else { Vec::new() };
+        let mut jacr_vec = if jacr { self.jac_vec() } else { Vec::new() };
+        self.jac_body_into(jacp.then_some(jacp_vec.as_mut_slice()), jacr.then_some(jacr_vec.as_mut_slice()), body_id)?;
+        Ok((jacp_vec, jacr_vec))
+    }
+
+    /// Same as [`MjData::jac_body`], except it writes each Jacobian as a row-major `3 x nv`
+    /// matrix into a caller-provided buffer; `None` skips that Jacobian. Elements of a buffer
+    /// above index `3 * nv` keep their previous values. Wraps [`mj_jacBody`].
+    /// # Errors
+    /// - [`MjDataError::IndexOutOfBounds`] when `body_id >= nbody`.
+    /// - [`MjDataError::BufferTooSmall`] when a given buffer holds fewer than `3 * nv` elements.
+    pub fn jac_body_into(&self, jacp: Option<&mut [MjtNum]>, jacr: Option<&mut [MjtNum]>, body_id: usize) -> Result<(), MjDataError> {
         let nbody = self.model.ffi().nbody;
         if body_id >= nbody as usize {
             return Err(MjDataError::IndexOutOfBounds { kind: "body_id", id: body_id, upper: nbody as usize });
         }
-        let required_len = 3 * self.model.ffi().nv as usize;
-        let mut jacp_vec = if jacp { vec![0 as MjtNum; required_len] } else { vec![] };
-        let mut jacr_vec = if jacr { vec![0 as MjtNum; required_len] } else { vec![] };
-        unsafe {
-            mj_jacBody(
-                self.model.ffi(), self.ffi(),
-                if jacp { jacp_vec.as_mut_ptr() } else { ptr::null_mut() },
-                if jacr { jacr_vec.as_mut_ptr() } else { ptr::null_mut() },
-                body_id as i32,
-            )
-        };
-        Ok((jacp_vec, jacr_vec))
+        let (jacp, jacr) = (self.jac_pointer("jacp", jacp)?, self.jac_pointer("jacr", jacr)?);
+        unsafe { mj_jacBody(self.model.ffi(), self.ffi(), jacp, jacr, body_id as i32) };
+        Ok(())
     }
 
     /// Compute body center-of-mass end-effector Jacobian.
@@ -912,22 +920,26 @@ impl<M: ModelType> MjData<M> {
     /// # Errors
     /// Returns [`MjDataError::IndexOutOfBounds`] when `body_id` is out of range.
     pub fn try_jac_body_com(&self, jacp: bool, jacr: bool, body_id: usize) -> Result<(Vec<MjtNum>, Vec<MjtNum>), MjDataError> {
+        let mut jacp_vec = if jacp { self.jac_vec() } else { Vec::new() };
+        let mut jacr_vec = if jacr { self.jac_vec() } else { Vec::new() };
+        self.jac_body_com_into(jacp.then_some(jacp_vec.as_mut_slice()), jacr.then_some(jacr_vec.as_mut_slice()), body_id)?;
+        Ok((jacp_vec, jacr_vec))
+    }
+
+    /// Same as [`MjData::jac_body_com`], except it writes each Jacobian as a row-major `3 x nv`
+    /// matrix into a caller-provided buffer; `None` skips that Jacobian. Elements of a buffer
+    /// above index `3 * nv` keep their previous values. Wraps [`mj_jacBodyCom`].
+    /// # Errors
+    /// - [`MjDataError::IndexOutOfBounds`] when `body_id >= nbody`.
+    /// - [`MjDataError::BufferTooSmall`] when a given buffer holds fewer than `3 * nv` elements.
+    pub fn jac_body_com_into(&self, jacp: Option<&mut [MjtNum]>, jacr: Option<&mut [MjtNum]>, body_id: usize) -> Result<(), MjDataError> {
         let nbody = self.model.ffi().nbody;
         if body_id >= nbody as usize {
             return Err(MjDataError::IndexOutOfBounds { kind: "body_id", id: body_id, upper: nbody as usize });
         }
-        let required_len = 3 * self.model.ffi().nv as usize;
-        let mut jacp_vec = if jacp { vec![0 as MjtNum; required_len] } else { vec![] };
-        let mut jacr_vec = if jacr { vec![0 as MjtNum; required_len] } else { vec![] };
-        unsafe {
-            mj_jacBodyCom(
-                self.model.ffi(), self.ffi(),
-                if jacp { jacp_vec.as_mut_ptr() } else { ptr::null_mut() },
-                if jacr { jacr_vec.as_mut_ptr() } else { ptr::null_mut() },
-                body_id as i32,
-            )
-        };
-        Ok((jacp_vec, jacr_vec))
+        let (jacp, jacr) = (self.jac_pointer("jacp", jacp)?, self.jac_pointer("jacr", jacr)?);
+        unsafe { mj_jacBodyCom(self.model.ffi(), self.ffi(), jacp, jacr, body_id as i32) };
+        Ok(())
     }
 
     /// Compute subtree center-of-mass end-effector Jacobian (translational only).
@@ -942,20 +954,25 @@ impl<M: ModelType> MjData<M> {
     /// # Errors
     /// Returns [`MjDataError::IndexOutOfBounds`] when `body_id` is out of range.
     pub fn try_jac_subtree_com(&mut self, body_id: usize) -> Result<Vec<MjtNum>, MjDataError> {
+        let mut jacp_vec = self.jac_vec();
+        self.jac_subtree_com_into(&mut jacp_vec, body_id)?;
+        Ok(jacp_vec)
+    }
+
+    /// Same as [`MjData::jac_subtree_com`], except it writes the row-major `3 x nv` Jacobian into
+    /// `jacp`. Elements of `jacp` above index `3 * nv` keep their previous values.
+    /// Wraps [`mj_jacSubtreeCom`].
+    /// # Errors
+    /// - [`MjDataError::IndexOutOfBounds`] when `body_id >= nbody`.
+    /// - [`MjDataError::BufferTooSmall`] when `jacp` holds fewer than `3 * nv` elements.
+    pub fn jac_subtree_com_into(&mut self, jacp: &mut [MjtNum], body_id: usize) -> Result<(), MjDataError> {
         let nbody = self.model.ffi().nbody;
         if body_id >= nbody as usize {
             return Err(MjDataError::IndexOutOfBounds { kind: "body_id", id: body_id, upper: nbody as usize });
         }
-        let required_len = 3 * self.model.ffi().nv as usize;
-        let mut jacp_vec = vec![0 as MjtNum; required_len];
-        unsafe {
-            mj_jacSubtreeCom(
-                self.model.ffi(), self.ffi_mut(),
-                jacp_vec.as_mut_ptr(),
-                body_id as i32,
-            )
-        };
-        Ok(jacp_vec)
+        let jacp = self.jac_pointer("jacp", Some(jacp))?;
+        unsafe { mj_jacSubtreeCom(self.model.ffi(), self.ffi_mut(), jacp, body_id as i32) };
+        Ok(())
     }
 
     /// Compute geom end-effector Jacobian.
@@ -971,22 +988,26 @@ impl<M: ModelType> MjData<M> {
     /// # Errors
     /// Returns [`MjDataError::IndexOutOfBounds`] when `geom_id` is out of range.
     pub fn try_jac_geom(&self, jacp: bool, jacr: bool, geom_id: usize) -> Result<(Vec<MjtNum>, Vec<MjtNum>), MjDataError> {
+        let mut jacp_vec = if jacp { self.jac_vec() } else { Vec::new() };
+        let mut jacr_vec = if jacr { self.jac_vec() } else { Vec::new() };
+        self.jac_geom_into(jacp.then_some(jacp_vec.as_mut_slice()), jacr.then_some(jacr_vec.as_mut_slice()), geom_id)?;
+        Ok((jacp_vec, jacr_vec))
+    }
+
+    /// Same as [`MjData::jac_geom`], except it writes each Jacobian as a row-major `3 x nv`
+    /// matrix into a caller-provided buffer; `None` skips that Jacobian. Elements of a buffer
+    /// above index `3 * nv` keep their previous values. Wraps [`mj_jacGeom`].
+    /// # Errors
+    /// - [`MjDataError::IndexOutOfBounds`] when `geom_id >= ngeom`.
+    /// - [`MjDataError::BufferTooSmall`] when a given buffer holds fewer than `3 * nv` elements.
+    pub fn jac_geom_into(&self, jacp: Option<&mut [MjtNum]>, jacr: Option<&mut [MjtNum]>, geom_id: usize) -> Result<(), MjDataError> {
         let ngeom = self.model.ffi().ngeom;
         if geom_id >= ngeom as usize {
             return Err(MjDataError::IndexOutOfBounds { kind: "geom_id", id: geom_id, upper: ngeom as usize });
         }
-        let required_len = 3 * self.model.ffi().nv as usize;
-        let mut jacp_vec = if jacp { vec![0 as MjtNum; required_len] } else { vec![] };
-        let mut jacr_vec = if jacr { vec![0 as MjtNum; required_len] } else { vec![] };
-        unsafe {
-            mj_jacGeom(
-                self.model.ffi(), self.ffi(),
-                if jacp { jacp_vec.as_mut_ptr() } else { ptr::null_mut() },
-                if jacr { jacr_vec.as_mut_ptr() } else { ptr::null_mut() },
-                geom_id as i32,
-            )
-        };
-        Ok((jacp_vec, jacr_vec))
+        let (jacp, jacr) = (self.jac_pointer("jacp", jacp)?, self.jac_pointer("jacr", jacr)?);
+        unsafe { mj_jacGeom(self.model.ffi(), self.ffi(), jacp, jacr, geom_id as i32) };
+        Ok(())
     }
 
     /// Compute site end-effector Jacobian.
@@ -1002,22 +1023,26 @@ impl<M: ModelType> MjData<M> {
     /// # Errors
     /// Returns [`MjDataError::IndexOutOfBounds`] when `site_id` is out of range.
     pub fn try_jac_site(&self, jacp: bool, jacr: bool, site_id: usize) -> Result<(Vec<MjtNum>, Vec<MjtNum>), MjDataError> {
+        let mut jacp_vec = if jacp { self.jac_vec() } else { Vec::new() };
+        let mut jacr_vec = if jacr { self.jac_vec() } else { Vec::new() };
+        self.jac_site_into(jacp.then_some(jacp_vec.as_mut_slice()), jacr.then_some(jacr_vec.as_mut_slice()), site_id)?;
+        Ok((jacp_vec, jacr_vec))
+    }
+
+    /// Same as [`MjData::jac_site`], except it writes each Jacobian as a row-major `3 x nv`
+    /// matrix into a caller-provided buffer; `None` skips that Jacobian. Elements of a buffer
+    /// above index `3 * nv` keep their previous values. Wraps [`mj_jacSite`].
+    /// # Errors
+    /// - [`MjDataError::IndexOutOfBounds`] when `site_id >= nsite`.
+    /// - [`MjDataError::BufferTooSmall`] when a given buffer holds fewer than `3 * nv` elements.
+    pub fn jac_site_into(&self, jacp: Option<&mut [MjtNum]>, jacr: Option<&mut [MjtNum]>, site_id: usize) -> Result<(), MjDataError> {
         let nsite = self.model.ffi().nsite;
         if site_id >= nsite as usize {
             return Err(MjDataError::IndexOutOfBounds { kind: "site_id", id: site_id, upper: nsite as usize });
         }
-        let required_len = 3 * self.model.ffi().nv as usize;
-        let mut jacp_vec = if jacp { vec![0 as MjtNum; required_len] } else { vec![] };
-        let mut jacr_vec = if jacr { vec![0 as MjtNum; required_len] } else { vec![] };
-        unsafe {
-            mj_jacSite(
-                self.model.ffi(), self.ffi(),
-                if jacp { jacp_vec.as_mut_ptr() } else { ptr::null_mut() },
-                if jacr { jacr_vec.as_mut_ptr() } else { ptr::null_mut() },
-                site_id as i32,
-            )
-        };
-        Ok((jacp_vec, jacr_vec))
+        let (jacp, jacr) = (self.jac_pointer("jacp", jacp)?, self.jac_pointer("jacr", jacr)?);
+        unsafe { mj_jacSite(self.model.ffi(), self.ffi(), jacp, jacr, site_id as i32) };
+        Ok(())
     }
 
     /// Compute subtree angular momentum matrix.
@@ -1031,13 +1056,40 @@ impl<M: ModelType> MjData<M> {
     /// # Errors
     /// Returns [`MjDataError::IndexOutOfBounds`] when `body_id` is out of range.
     pub fn try_angmom_mat(&mut self, body_id: usize) -> Result<Vec<MjtNum>, MjDataError> {
+        let mut mat = self.jac_vec();
+        self.angmom_mat_into(&mut mat, body_id)?;
+        Ok(mat)
+    }
+
+    /// Same as [`MjData::angmom_mat`], except it writes the row-major `3 x nv` matrix into `mat`.
+    /// Elements of `mat` above index `3 * nv` keep their previous values. Wraps [`mj_angmomMat`].
+    /// # Errors
+    /// - [`MjDataError::IndexOutOfBounds`] when `body_id >= nbody`.
+    /// - [`MjDataError::BufferTooSmall`] when `mat` holds fewer than `3 * nv` elements.
+    pub fn angmom_mat_into(&mut self, mat: &mut [MjtNum], body_id: usize) -> Result<(), MjDataError> {
         let nbody = self.model.ffi().nbody;
         if body_id >= nbody as usize {
             return Err(MjDataError::IndexOutOfBounds { kind: "body_id", id: body_id, upper: nbody as usize });
         }
-        let mut mat = vec![0.0; 3 * self.model.ffi().nv as usize];
-        unsafe { mj_angmomMat(self.model.ffi(), self.ffi_mut(), mat.as_mut_ptr(), body_id as i32) };
-        Ok(mat)
+        let mat = self.jac_pointer("mat", Some(mat))?;
+        unsafe { mj_angmomMat(self.model.ffi(), self.ffi_mut(), mat, body_id as i32) };
+        Ok(())
+    }
+
+    /// Returns a zeroed buffer for one row-major `3 x nv` matrix.
+    fn jac_vec(&self) -> Vec<MjtNum> {
+        vec![0.0; 3 * self.model.ffi().nv as usize]
+    }
+
+    /// Returns the pointer to `buffer` when it holds at least `3 * nv` elements, or a null pointer
+    /// when `buffer` is `None`.
+    fn jac_pointer(&self, name: &'static str, buffer: Option<&mut [MjtNum]>) -> Result<*mut MjtNum, MjDataError> {
+        let needed = 3 * self.model.ffi().nv as usize;
+        match buffer {
+            Some(buffer) if buffer.len() < needed => Err(MjDataError::BufferTooSmall { name, got: buffer.len(), needed }),
+            Some(buffer) => Ok(buffer.as_mut_ptr()),
+            None => Ok(ptr::null_mut()),
+        }
     }
 
     /// Run all kinematics-like computations (kinematics, comPos, camlight, flex, tendon).
@@ -3353,6 +3405,66 @@ mod test {
         // Too-large ID
         let err = data.try_jac(true, true, &point, 9999).unwrap_err();
         assert!(matches!(err, MjDataError::IndexOutOfBounds { kind: "body_id", .. }));
+    }
+
+    /// Every `_into` Jacobian is checked against a velocity that MuJoCo computes on a separate
+    /// path: the point Jacobians against `mj_objectVelocity`, the subtree ones against
+    /// `mj_subtreeVel`. A short buffer is refused before MuJoCo writes; a longer one keeps its tail.
+    #[test]
+    fn test_jac_into_family() {
+        let model = MjModel::from_xml_string(MODEL).unwrap();
+        let mut data = model.make_data();
+        let nv = model.nv() as usize;
+        for (i, v) in data.qvel_mut().iter_mut().enumerate() {
+            *v = 0.1 * (i as MjtNum + 1.0);
+        }
+        data.forward();
+        data.subtree_vel();
+        let qvel = data.qvel().to_vec();
+        let assert_velocity = |jac: &[MjtNum], expected: &[MjtNum]| {
+            for (row, expected) in jac.chunks_exact(nv).zip(expected) {
+                let actual: MjtNum = row.iter().zip(&qvel).map(|(j, v)| j * v).sum();
+                assert_relative_eq!(actual, *expected, epsilon = 1e-9);
+            }
+        };
+
+        let ball = model.body("ball").unwrap().id;
+        let green = model.geom("green_sphere").unwrap().id;
+        let mut jacp = vec![7.0; 3 * nv + 1];
+        let mut jacr = vec![0.0; 3 * nv];
+
+        // A point Jacobian times qvel is the (rot:lin) velocity of that point.
+        let frame = data.object_velocity(MjtObj::mjOBJ_XBODY, ball, false);
+        data.jac_into(Some(&mut jacp), Some(&mut jacr), &data.xpos()[ball], ball).unwrap();
+        assert_velocity(&jacr, &frame[..3]);
+        assert_velocity(&jacp[..3 * nv], &frame[3..]);
+        assert_eq!(jacp[3 * nv], 7.0);
+        jacp.fill(0.0);
+        data.jac_body_into(Some(&mut jacp), Some(&mut jacr), ball).unwrap();
+        assert_velocity(&jacr, &frame[..3]);
+        assert_velocity(&jacp[..3 * nv], &frame[3..]);
+        let com = data.object_velocity(MjtObj::mjOBJ_BODY, ball, false);
+        data.jac_body_com_into(Some(&mut jacp), Some(&mut jacr), ball).unwrap();
+        assert_velocity(&jacr, &com[..3]);
+        assert_velocity(&jacp[..3 * nv], &com[3..]);
+        let geom = data.object_velocity(MjtObj::mjOBJ_GEOM, green, false);
+        data.jac_geom_into(Some(&mut jacp), None, green).unwrap();
+        assert_velocity(&jacp[..3 * nv], &geom[3..]);
+
+        // The subtree matrices times qvel are the subtree velocity and angular momentum.
+        data.jac_subtree_com_into(&mut jacp, 0).unwrap();
+        assert_velocity(&jacp[..3 * nv], &data.subtree_linvel()[0]);
+        data.angmom_mat_into(&mut jacp, ball).unwrap();
+        assert_velocity(&jacp[..3 * nv], &data.subtree_angmom()[ball]);
+
+        let mut short = vec![0.0; 3 * nv - 1];
+        let err = data.jac_body_into(None, Some(&mut short), ball).unwrap_err();
+        assert!(matches!(
+            err,
+            MjDataError::BufferTooSmall { name: "jacr", got, needed } if got == 3 * nv - 1 && needed == 3 * nv
+        ));
+        let err = data.angmom_mat_into(&mut short, ball).unwrap_err();
+        assert!(matches!(err, MjDataError::BufferTooSmall { name: "mat", .. }));
     }
 
     /// Tests that `object_velocity` returns `UnsupportedObjectType` for unsupported types

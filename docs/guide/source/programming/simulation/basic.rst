@@ -173,6 +173,51 @@ for precise timing.
         }
     }
 
+.. _simulation_performance:
+
+Performance
+====================
+
+A step is one call into MuJoCo, so the physics options of the model decide most of the cost.
+Two practices on |mj_data| still matter in a tight loop.
+
+**Thread pool.**
+:docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>set_threadpool` binds a pool of
+worker threads to the data. MuJoCo then solves the constraint islands of a step in parallel, so
+the gain grows with the number of islands: a scene of many separate bodies benefits, a single
+robot does not.
+
+.. code-block:: rust
+
+    let mut data = MjData::new(&model);
+    data.set_threadpool(4);
+
+**Buffer reuse.**
+A method that returns a ``Vec`` allocates on every call. Each one has a variant that writes into a
+buffer the caller keeps:
+:docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>rne_into`,
+:docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>read_state_into`,
+:docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>read_sensor_into`, and the
+Jacobian family
+:docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>jac_into`,
+:docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>jac_body_into`,
+:docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>jac_body_com_into`,
+:docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>jac_subtree_com_into`,
+:docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>jac_geom_into`,
+:docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>jac_site_into` and
+:docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>angmom_mat_into`.
+Allocate the buffer once, outside the loop.
+
+.. code-block:: rust
+
+    let nv = model.nv() as usize;
+    let mut jacp = vec![0.0; 3 * nv];
+    let mut jacr = vec![0.0; 3 * nv];
+    for _ in 0..1000 {
+        data.step();
+        data.jac_body_into(Some(&mut jacp), Some(&mut jacr), body_id).unwrap();
+    }
+
 .. _changing_model_parameters:
 
 Changing model's parameters
