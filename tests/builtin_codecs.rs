@@ -5,7 +5,7 @@
 //! only through the table `libmujoco.a` carries for that purpose. Without it a static link
 //! parses XML but reports "no encoder found" for `.mjz` and fails to load any mesh file.
 
-use std::ffi::{CStr, CString};
+use std::ffi::{CStr, CString, c_char};
 use std::path::PathBuf;
 use std::ptr;
 
@@ -44,7 +44,7 @@ fn mjz_archive_round_trips_through_the_registered_codec() {
     spec.compile().unwrap();
 
     let c_path = CString::new(path.to_str().unwrap()).unwrap();
-    let mut error = [0i8; ERROR_BUF_LEN];
+    let mut error = [0 as c_char; ERROR_BUF_LEN];
     // SAFETY: the spec is compiled, the path is NUL-terminated, and the error buffer length is
     // passed alongside it. Model, content type and VFS are documented nullable.
     let written = unsafe {
