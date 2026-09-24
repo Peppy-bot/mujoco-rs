@@ -37,6 +37,7 @@
 *New* |mj_data| *effective-metric accessors*
 
 - The accessors that read the metric terms MuJoCo fills at a later pipeline stage are ``unsafe fn``:
+  :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>efm_c`,
   :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>efm_diag`,
   :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>efm_sdiag`,
   :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>efm_fluid`,
