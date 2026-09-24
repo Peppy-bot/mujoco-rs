@@ -1,13 +1,29 @@
-7.0.0 (MuJoCo 3.13.0)
+7.0.0 (MuJoCo 3.14.0)
 ======================
 
 .. rubric:: Breaking changes
 
-*MuJoCo FFI upgraded to 3.13.0*
+*MuJoCo FFI upgraded to 3.14.0*
 
-- MuJoCo-rs now builds against MuJoCo 3.13.0 FFI. This is a breaking dependency-level change for
+- MuJoCo-rs now builds against MuJoCo 3.14.0 FFI. This is a breaking dependency-level change for
   consumers tied to older MuJoCo C ABI details. See MuJoCo's changelog for this release:
-  https://mujoco.readthedocs.io/en/3.13.0/changelog.html
+  https://mujoco.readthedocs.io/en/3.14.0/changelog.html
+
+*Control-history reads return every control of the actuator*
+
+- :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>read_ctrl` and
+  :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>try_read_ctrl` now return a
+  ``Cow<[MjtNum]>`` with the ``actuator_ctrlnum[id]`` controls of the actuator instead of one
+  ``MjtNum``, because MuJoCo 3.14.0 reads the controls of a multi-input actuator as one block.
+  |mj_data| gains readers that do not allocate, as the sensor readers do:
+  :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>read_ctrl_into` :sup:`new`,
+  :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>read_ctrl_fixed` :sup:`new`
+  and :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>try_read_ctrl_fixed`
+  :sup:`new`. See :ref:`migrate_7_0_0`.
+- :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>init_ctrl_history` now
+  expects ``nsample * actuator_ctrlnum[id]`` values. For a multi-input actuator it returns
+  ``LengthMismatch`` (:docs-rs:`~mujoco_rs::error::<enum>MjDataError`) for the ``nsample`` values
+  it accepted before.
 
 .. rubric:: New features and improvements
 
@@ -21,6 +37,7 @@
 *New* |mj_data| *effective-metric accessors*
 
 - The accessors that read the metric terms MuJoCo fills at a later pipeline stage are ``unsafe fn``:
+  :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>efm_c`,
   :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>efm_diag`,
   :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>efm_sdiag`,
   :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>efm_fluid`,
