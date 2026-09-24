@@ -43,7 +43,7 @@ impl<T> ::std::cmp::PartialEq for __BindgenUnionField<T> {
     }
 }
 impl<T> ::std::cmp::Eq for __BindgenUnionField<T> {}
-pub const mjVERSION_HEADER: u32 = 3013000;
+pub const mjVERSION_HEADER: u32 = 3014000;
 pub const mjMINVAL: f64 = 0.000000000000001;
 pub const mjMAXVAL: f64 = 10000000000.0;
 pub const mjPI: f64 = 3.141592653589793;
@@ -149,7 +149,8 @@ pub enum mjtEnableBit {
     mjENBL_INVDISCRETE = 8,
     mjENBL_SLEEP = 16,
     mjENBL_DIAGEXACT = 32,
-    mjNENABLE = 6,
+    mjENBL_IPC = 64,
+    mjNENABLE = 7,
 }
 #[repr(u32)]
 #[derive(Debug, Clone, Hash, PartialEq, Eq,  Copy)]
@@ -1596,6 +1597,8 @@ pub struct mjData_ {
     pub flexvert_J: *mut mjtNum,
     pub flexvert_length: *mut mjtNum,
     pub bvh_aabb_dyn: *mut mjtNum,
+    pub flexvert_lambda: *mut mjtNum,
+    pub flexvert_conage: *mut ::std::os::raw::c_int,
     pub ten_wrapadr: *mut ::std::os::raw::c_int,
     pub ten_wrapnum: *mut ::std::os::raw::c_int,
     pub ten_J: *mut mjtNum,
@@ -3474,7 +3477,7 @@ unsafe extern "C" {
     pub static mut mjDISABLESTRING: [*const ::std::os::raw::c_char; 20usize];
 }
 unsafe extern "C" {
-    pub static mut mjENABLESTRING: [*const ::std::os::raw::c_char; 6usize];
+    pub static mut mjENABLESTRING: [*const ::std::os::raw::c_char; 7usize];
 }
 unsafe extern "C" {
     pub static mut mjTIMERSTRING: [*const ::std::os::raw::c_char; 15usize];
@@ -4067,8 +4070,9 @@ unsafe extern "C" {
         d: *const mjData,
         id: ::std::os::raw::c_int,
         time: mjtNum,
+        result: *mut mjtNum,
         interp: ::std::os::raw::c_int,
-    ) -> mjtNum;
+    ) -> *const mjtNum;
 }
 unsafe extern "C" {
     pub fn mj_readSensor(
@@ -5642,6 +5646,17 @@ unsafe extern "C" {
         filename: *const ::std::os::raw::c_char,
         content_type: *const ::std::os::raw::c_char,
     ) -> *const mjpEncoder;
+}
+unsafe extern "C" {
+    pub fn mjp_registerArchiveResourceProvider(provider: *const mjpResourceProvider);
+}
+unsafe extern "C" {
+    pub fn mjp_findArchiveResourceProvider(
+        resource_name: *const ::std::os::raw::c_char,
+    ) -> *const mjpResourceProvider;
+}
+unsafe extern "C" {
+    pub fn mjp_archiveResourceProviderCount() -> ::std::os::raw::c_int;
 }
 unsafe extern "C" {
     pub fn mju_openResource(

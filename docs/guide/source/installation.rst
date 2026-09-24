@@ -4,7 +4,7 @@
 Installation
 =============================
 
-.. _mj_download: https://github.com/google-deepmind/mujoco/releases/tag/3.13.0
+.. _mj_download: https://github.com/google-deepmind/mujoco/releases/tag/3.14.0
 
 
 MuJoCo-rs

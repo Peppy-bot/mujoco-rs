@@ -141,7 +141,7 @@ Similarly, :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>ste
 :docs-rs:`~~mujoco_rs::mujoco_c::<fn>mj_step1` and :docs-rs:`~~mujoco_rs::mujoco_c::<fn>mj_step2`, respectively.
 
 For more information about specific MuJoCo functions, see the
-`MuJoCo documentation <https://mujoco.readthedocs.io/en/3.13.0/APIreference/APIfunctions.html#mj-step>`_.
+`MuJoCo documentation <https://mujoco.readthedocs.io/en/3.14.0/APIreference/APIfunctions.html#mj-step>`_.
 
 Real-time
 ----------------------
@@ -197,7 +197,8 @@ A method that returns a ``Vec`` allocates on every call. Each one has a variant 
 buffer the caller keeps:
 :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>rne_into`,
 :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>read_state_into`,
-:docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>read_sensor_into`, and the
+:docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>read_sensor_into`,
+:docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>read_ctrl_into`, and the
 Jacobian family
 :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>jac_into`,
 :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>jac_body_into`,
@@ -230,7 +231,7 @@ such as physics parameters --- part of |mj_model|.
 .. danger::
 
     Not all parameters of |mj_model| are safe to change.
-    See `MuJoCo's documentation <https://mujoco.readthedocs.io/en/3.13.0/programming/simulation.html#mjmodel-changes>`_
+    See `MuJoCo's documentation <https://mujoco.readthedocs.io/en/3.14.0/programming/simulation.html#mjmodel-changes>`_
     for a list of parameters that are safe to change.
 
 Direct mutation with ``model_opt_mut`` / ``model_vis_mut`` / ``model_stat_mut``

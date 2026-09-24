@@ -1,4 +1,4 @@
 [submodule "mujoco"]
 	path = mujoco
 	url = https://github.com/Peppy-bot/mujoco.git
-	branch = release/3.13.0-static
+	branch = release/3.14.0-static
