@@ -1977,6 +1977,54 @@ impl<M: ModelTypeMut> MjData<M> {
         self.model.qpos_spring_mut()
     }
 
+    /// Returns a mutable reference to [`MjModel::mesh_vert_mut`] without allowing unsafe
+    /// modifications to the rest of the [`MjModel`].
+    ///
+    /// The vertex positions are plain data of a fixed count, so a simulation may reshape a
+    /// mesh between frames and upload it to a rendering context again
+    /// (`MjRenderer::update_mesh_from`). Collision reads these positions too, through the
+    /// mesh's convex hull, while the bounding volumes the compiler built from them stay as
+    /// they are: a mesh reshaped here suits a geom that only draws.
+    ///
+    /// Immutable references can be made through [`MjModel::mesh_vert`] of [`MjData::model`].
+    /// # Example
+    /// ```rust
+    /// # use mujoco_rs::prelude::{MjModel, MjData};
+    /// let model = Box::new(MjModel::from_xml_string(
+    ///     r#"<mujoco><asset><mesh name="tet" vertex="0 0 0 1 0 0 0 1 0 0 0 1"/></asset>
+    ///        <worldbody><geom type="mesh" mesh="tet" contype="0" conaffinity="0"/>
+    ///        </worldbody></mujoco>"#).unwrap());
+    /// let mut data = MjData::new(model);
+    /// data.model_mesh_vert_mut()[0] = [0.5, 0.25, 0.125];
+    /// assert_eq!(data.model().mesh_vert()[0], [0.5, 0.25, 0.125]);
+    /// ```
+    pub fn model_mesh_vert_mut(&mut self) -> &mut [[f32; 3]] {
+        self.model.mesh_vert_mut()
+    }
+
+    /// Returns a mutable reference to [`MjModel::mesh_normal_mut`] without allowing unsafe
+    /// modifications to the rest of the [`MjModel`].
+    ///
+    /// The normals are plain data of a fixed count, which a rendering context reads when a
+    /// mesh is uploaded: a mesh reshaped through [`MjData::model_mesh_vert_mut`] shades as
+    /// its new shape once the normals of that shape are written here.
+    ///
+    /// Immutable references can be made through [`MjModel::mesh_normal`] of [`MjData::model`].
+    /// # Example
+    /// ```rust
+    /// # use mujoco_rs::prelude::{MjModel, MjData};
+    /// let model = Box::new(MjModel::from_xml_string(
+    ///     r#"<mujoco><asset><mesh name="tet" vertex="0 0 0 1 0 0 0 1 0 0 0 1"/></asset>
+    ///        <worldbody><geom type="mesh" mesh="tet" contype="0" conaffinity="0"/>
+    ///        </worldbody></mujoco>"#).unwrap());
+    /// let mut data = MjData::new(model);
+    /// data.model_mesh_normal_mut()[0] = [0.0, 0.0, 1.0];
+    /// assert_eq!(data.model().mesh_normal()[0], [0.0, 0.0, 1.0]);
+    /// ```
+    pub fn model_mesh_normal_mut(&mut self) -> &mut [[f32; 3]] {
+        self.model.mesh_normal_mut()
+    }
+
     /// Returns a mutable reference to [`MjModel::vis_mut`] without allowing unsafe
     /// modifications to the rest of the [`MjModel`].
     /// 
@@ -3983,6 +4031,39 @@ mod test {
         data.eq_active_mut()[1] = false;
         data.step();
         assert!(data.equality_forces().all(|(id, _)| id == 0));
+    }
+
+    /// Vertices and normals written through the data are the model's: they reach the
+    /// arrays a rendering context uploads, the other mesh's range stays as it was, and the
+    /// data still computes a forward pass.
+    #[test]
+    fn test_model_mesh_vert_and_normal_mut_write_the_models_arrays() {
+        let model = Box::new(MjModel::from_xml_string(
+            r#"<mujoco><asset>
+               <mesh name="first" vertex="0 0 0  1 0 0  0 1 0  0 0 1"/>
+               <mesh name="second" vertex="0 0 0  2 0 0  0 2 0  0 0 2"/>
+               </asset><worldbody><body><freejoint/>
+               <geom type="mesh" mesh="first" contype="0" conaffinity="0" mass="1"/>
+               <geom type="mesh" mesh="second" contype="0" conaffinity="0" mass="1"/>
+               </body></worldbody></mujoco>"#,
+        ).unwrap());
+        let mut data = MjData::new(model);
+        let second = data.model().mesh_vertadr()[1] as usize;
+        let second_normal = data.model().mesh_normaladr()[1] as usize;
+        let untouched_vertices = data.model().mesh_vert()[second..].to_vec();
+        let untouched_normals = data.model().mesh_normal()[second_normal..].to_vec();
+        let lowered: Vec<[f32; 3]> = data.model().mesh_vert()[..second]
+            .iter()
+            .map(|[x, y, z]| [*x, *y, *z - 0.25])
+            .collect();
+        data.model_mesh_vert_mut()[..second].copy_from_slice(&lowered);
+        data.model_mesh_normal_mut()[..second_normal].fill([0.0, 0.0, 1.0]);
+        assert_eq!(&data.model().mesh_vert()[..second], lowered.as_slice());
+        assert!(data.model().mesh_normal()[..second_normal].iter().all(|n| *n == [0.0, 0.0, 1.0]));
+        assert_eq!(&data.model().mesh_vert()[second..], untouched_vertices.as_slice());
+        assert_eq!(&data.model().mesh_normal()[second_normal..], untouched_normals.as_slice());
+        data.forward();
+        assert!(data.qacc().iter().all(|a| a.is_finite()));
     }
 
     /// Verifies that the eq_active bool slice matches the raw FFI pointer values.
