@@ -2025,6 +2025,31 @@ impl<M: ModelTypeMut> MjData<M> {
         self.model.mesh_normal_mut()
     }
 
+    /// Returns a mutable reference to [`MjModel::mesh_texcoord_mut`] without allowing unsafe
+    /// modifications to the rest of the [`MjModel`].
+    ///
+    /// The texture coordinates are plain data of a fixed count, which a rendering context
+    /// reads when a mesh is uploaded (`MjRenderer::update_mesh_from`): a simulation may move
+    /// a mesh's texture across its surface between frames, a conveyor's belt running under
+    /// a repeating texture, without the unsafe model_mut.
+    ///
+    /// Immutable references can be made through [`MjModel::mesh_texcoord`] of [`MjData::model`].
+    /// # Example
+    /// ```rust
+    /// # use mujoco_rs::prelude::{MjModel, MjData};
+    /// let model = Box::new(MjModel::from_xml_string(
+    ///     r#"<mujoco><asset><mesh name="tet" vertex="0 0 0 1 0 0 0 1 0 0 0 1"
+    ///        texcoord="0 0 1 0 0 1 1 1"/></asset>
+    ///        <worldbody><geom type="mesh" mesh="tet" contype="0" conaffinity="0"/>
+    ///        </worldbody></mujoco>"#).unwrap());
+    /// let mut data = MjData::new(model);
+    /// data.model_mesh_texcoord_mut()[0] = [0.25, 0.5];
+    /// assert_eq!(data.model().mesh_texcoord()[0], [0.25, 0.5]);
+    /// ```
+    pub fn model_mesh_texcoord_mut(&mut self) -> &mut [[f32; 2]] {
+        self.model.mesh_texcoord_mut()
+    }
+
     /// Returns a mutable reference to [`MjModel::vis_mut`] without allowing unsafe
     /// modifications to the rest of the [`MjModel`].
     /// 
@@ -4062,6 +4087,36 @@ mod test {
         assert!(data.model().mesh_normal()[..second_normal].iter().all(|n| *n == [0.0, 0.0, 1.0]));
         assert_eq!(&data.model().mesh_vert()[second..], untouched_vertices.as_slice());
         assert_eq!(&data.model().mesh_normal()[second_normal..], untouched_normals.as_slice());
+        data.forward();
+        assert!(data.qacc().iter().all(|a| a.is_finite()));
+    }
+
+    /// Texture coordinates written through the data are the model's: they reach the array
+    /// a rendering context uploads, the other mesh's range stays as it was, and the data
+    /// still computes a forward pass.
+    #[test]
+    fn test_model_mesh_texcoord_mut_writes_the_models_array() {
+        let model = Box::new(MjModel::from_xml_string(
+            r#"<mujoco><asset>
+               <mesh name="first" vertex="0 0 0  1 0 0  0 1 0  0 0 1"
+                     texcoord="0 0  1 0  0 1  1 1"/>
+               <mesh name="second" vertex="0 0 0  2 0 0  0 2 0  0 0 2"
+                     texcoord="0 0  0.5 0  0 0.5  0.5 0.5"/>
+               </asset><worldbody><body><freejoint/>
+               <geom type="mesh" mesh="first" contype="0" conaffinity="0" mass="1"/>
+               <geom type="mesh" mesh="second" contype="0" conaffinity="0" mass="1"/>
+               </body></worldbody></mujoco>"#,
+        ).unwrap());
+        let mut data = MjData::new(model);
+        let second = data.model().mesh_texcoordadr()[1] as usize;
+        let untouched = data.model().mesh_texcoord()[second..].to_vec();
+        let shifted: Vec<[f32; 2]> = data.model().mesh_texcoord()[..second]
+            .iter()
+            .map(|[u, v]| [*u + 0.25, *v])
+            .collect();
+        data.model_mesh_texcoord_mut()[..second].copy_from_slice(&shifted);
+        assert_eq!(&data.model().mesh_texcoord()[..second], shifted.as_slice());
+        assert_eq!(&data.model().mesh_texcoord()[second..], untouched.as_slice());
         data.forward();
         assert!(data.qacc().iter().all(|a| a.is_finite()));
     }
