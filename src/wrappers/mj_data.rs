@@ -271,6 +271,38 @@ impl<M: ModelType> MjData<M> {
         }
     }
 
+    /// The constraint forces of the active equality constraints, one item per constraint
+    /// row in the order the solver lists them: the equality's id and the row's force in
+    /// constraint space. A connect adds 3 rows (the force, world frame), a weld 6 (the
+    /// force, world frame, then its 3 rotational rows). An inactive equality adds none.
+    ///
+    /// # Note
+    /// As for [`MjData::contact_force`], the forces are those the last step or forward
+    /// pass computed.
+    pub fn equality_forces(&self) -> impl Iterator<Item = (usize, MjtNum)> + '_ {
+        let nefc = self.ffi().nefc.max(0) as usize;
+        let (types, ids, forces): (&[i32], &[i32], &[MjtNum]) = if nefc == 0 {
+            // Before the first step the arrays are not allocated.
+            (&[], &[], &[])
+        } else {
+            // SAFETY: after a step or forward pass MuJoCo holds nefc rows of efc_type,
+            // efc_id and efc_force, which the solver filled.
+            unsafe {
+                (
+                    std::slice::from_raw_parts(self.ffi().efc_type, nefc),
+                    std::slice::from_raw_parts(self.ffi().efc_id, nefc),
+                    std::slice::from_raw_parts(self.ffi().efc_force, nefc),
+                )
+            }
+        };
+        types
+            .iter()
+            .zip(ids)
+            .zip(forces)
+            .filter(|((kind, _), _)| **kind == mjtConstraint::mjCNSTR_EQUALITY as i32)
+            .map(|((_, id), force)| (*id as usize, *force))
+    }
+
     /// Extracts the contact force in the contact frame for the given `contact_id`.
     /// The `contact_id` matches the index of the contact when iterating
     /// via [`MjData::contact`]. Wraps [`mj_contactForce`].
@@ -1921,6 +1953,76 @@ impl<M: ModelTypeMut> MjData<M> {
     /// ```
     pub fn model_opt_mut(&mut self) -> &mut MjOption {
         self.model.opt_mut()
+    }
+
+    /// Returns a mutable reference to [`MjModel::qpos_spring_mut`] without allowing unsafe
+    /// modifications to the rest of the [`MjModel`].
+    ///
+    /// The rest pose of the joint springs is plain data the next step reads, so a
+    /// simulation may move it between steps: a plastic joint's spring follows the joint
+    /// once the spring's force passes a yield load.
+    ///
+    /// Immutable references can be made through [`MjModel::qpos_spring`] of [`MjData::model`].
+    /// # Example
+    /// ```rust
+    /// # use mujoco_rs::prelude::{MjModel, MjData};
+    /// let model = Box::new(MjModel::from_xml_string(
+    ///     r#"<mujoco><worldbody><body><joint type="slide" stiffness="10"/>
+    ///        <geom size="0.1"/></body></worldbody></mujoco>"#).unwrap());
+    /// let mut data = MjData::new(model);
+    /// data.model_qpos_spring_mut()[0] = -0.05;
+    /// assert_eq!(data.model().qpos_spring()[0], -0.05);
+    /// ```
+    pub fn model_qpos_spring_mut(&mut self) -> &mut [MjtNum] {
+        self.model.qpos_spring_mut()
+    }
+
+    /// Returns a mutable reference to [`MjModel::mesh_vert_mut`] without allowing unsafe
+    /// modifications to the rest of the [`MjModel`].
+    ///
+    /// The vertex positions are plain data of a fixed count, so a simulation may reshape a
+    /// mesh between frames and upload it to a rendering context again
+    /// (`MjRenderer::update_mesh_from`). Collision reads these positions too, through the
+    /// mesh's convex hull, while the bounding volumes the compiler built from them stay as
+    /// they are: a mesh reshaped here suits a geom that only draws.
+    ///
+    /// Immutable references can be made through [`MjModel::mesh_vert`] of [`MjData::model`].
+    /// # Example
+    /// ```rust
+    /// # use mujoco_rs::prelude::{MjModel, MjData};
+    /// let model = Box::new(MjModel::from_xml_string(
+    ///     r#"<mujoco><asset><mesh name="tet" vertex="0 0 0 1 0 0 0 1 0 0 0 1"/></asset>
+    ///        <worldbody><geom type="mesh" mesh="tet" contype="0" conaffinity="0"/>
+    ///        </worldbody></mujoco>"#).unwrap());
+    /// let mut data = MjData::new(model);
+    /// data.model_mesh_vert_mut()[0] = [0.5, 0.25, 0.125];
+    /// assert_eq!(data.model().mesh_vert()[0], [0.5, 0.25, 0.125]);
+    /// ```
+    pub fn model_mesh_vert_mut(&mut self) -> &mut [[f32; 3]] {
+        self.model.mesh_vert_mut()
+    }
+
+    /// Returns a mutable reference to [`MjModel::mesh_normal_mut`] without allowing unsafe
+    /// modifications to the rest of the [`MjModel`].
+    ///
+    /// The normals are plain data of a fixed count, which a rendering context reads when a
+    /// mesh is uploaded: a mesh reshaped through [`MjData::model_mesh_vert_mut`] shades as
+    /// its new shape once the normals of that shape are written here.
+    ///
+    /// Immutable references can be made through [`MjModel::mesh_normal`] of [`MjData::model`].
+    /// # Example
+    /// ```rust
+    /// # use mujoco_rs::prelude::{MjModel, MjData};
+    /// let model = Box::new(MjModel::from_xml_string(
+    ///     r#"<mujoco><asset><mesh name="tet" vertex="0 0 0 1 0 0 0 1 0 0 0 1"/></asset>
+    ///        <worldbody><geom type="mesh" mesh="tet" contype="0" conaffinity="0"/>
+    ///        </worldbody></mujoco>"#).unwrap());
+    /// let mut data = MjData::new(model);
+    /// data.model_mesh_normal_mut()[0] = [0.0, 0.0, 1.0];
+    /// assert_eq!(data.model().mesh_normal()[0], [0.0, 0.0, 1.0]);
+    /// ```
+    pub fn model_mesh_normal_mut(&mut self) -> &mut [[f32; 3]] {
+        self.model.mesh_normal_mut()
     }
 
     /// Returns a mutable reference to [`MjModel::vis_mut`] without allowing unsafe
@@ -3882,6 +3984,86 @@ mod test {
                 assert_eq!(mocap_quat[i][j], unsafe { *data.ffi().mocap_quat.add(i * 4 + j) });
             }
         }
+    }
+
+    /// The spring rest pose written through the data holds the joint where it is written.
+    #[test]
+    fn test_model_qpos_spring_mut_moves_the_spring_rest_pose() {
+        let model = Box::new(MjModel::from_xml_string(
+            r#"<mujoco><option gravity="0 0 0"/><worldbody><body>
+               <joint type="slide" axis="1 0 0" stiffness="100" damping="20"/>
+               <geom size="0.1" mass="1"/></body></worldbody></mujoco>"#,
+        ).unwrap());
+        let mut data = MjData::new(model);
+        data.model_qpos_spring_mut()[0] = 0.2;
+        assert_eq!(data.model().qpos_spring()[0], 0.2);
+        for _ in 0..2000 {
+            data.step();
+        }
+        assert!((data.qpos()[0] - 0.2).abs() < 1e-3, "{}", data.qpos()[0]);
+    }
+
+    /// A weld adds six rows under its id, the first three the force holding the body up;
+    /// an inactive one adds none.
+    #[test]
+    fn test_equality_forces_lists_a_welds_rows() {
+        let model = Box::new(MjModel::from_xml_string(
+            r#"<mujoco><worldbody>
+               <body name="post" pos="0 0 1"/>
+               <body name="free" pos="0 0 1"><freejoint/><geom size="0.05" mass="1" contype="0" conaffinity="0"/></body>
+               <body name="other" pos="1 0 1"><freejoint/><geom size="0.05" mass="2" contype="0" conaffinity="0"/></body>
+               </worldbody><equality>
+               <connect body1="post" body2="other" anchor="1 0 1"/>
+               <weld body1="post" body2="free" solref="0.004 1"/>
+               </equality></mujoco>"#,
+        ).unwrap());
+        let mut data = MjData::new(model);
+        assert_eq!(data.equality_forces().count(), 0, "no rows before the first step");
+        for _ in 0..500 {
+            data.step();
+        }
+        let rows: Vec<_> = data.equality_forces().collect();
+        assert_eq!(rows.iter().filter(|(id, _)| *id == 0).count(), 3);
+        let weld: Vec<f64> = rows.iter().filter(|(id, _)| *id == 1).map(|(_, f)| *f).collect();
+        assert_eq!(weld.len(), 6);
+        let force = (weld[0].powi(2) + weld[1].powi(2) + weld[2].powi(2)).sqrt();
+        assert!((force - 9.81).abs() < 0.01, "{force}");
+        data.eq_active_mut()[1] = false;
+        data.step();
+        assert!(data.equality_forces().all(|(id, _)| id == 0));
+    }
+
+    /// Vertices and normals written through the data are the model's: they reach the
+    /// arrays a rendering context uploads, the other mesh's range stays as it was, and the
+    /// data still computes a forward pass.
+    #[test]
+    fn test_model_mesh_vert_and_normal_mut_write_the_models_arrays() {
+        let model = Box::new(MjModel::from_xml_string(
+            r#"<mujoco><asset>
+               <mesh name="first" vertex="0 0 0  1 0 0  0 1 0  0 0 1"/>
+               <mesh name="second" vertex="0 0 0  2 0 0  0 2 0  0 0 2"/>
+               </asset><worldbody><body><freejoint/>
+               <geom type="mesh" mesh="first" contype="0" conaffinity="0" mass="1"/>
+               <geom type="mesh" mesh="second" contype="0" conaffinity="0" mass="1"/>
+               </body></worldbody></mujoco>"#,
+        ).unwrap());
+        let mut data = MjData::new(model);
+        let second = data.model().mesh_vertadr()[1] as usize;
+        let second_normal = data.model().mesh_normaladr()[1] as usize;
+        let untouched_vertices = data.model().mesh_vert()[second..].to_vec();
+        let untouched_normals = data.model().mesh_normal()[second_normal..].to_vec();
+        let lowered: Vec<[f32; 3]> = data.model().mesh_vert()[..second]
+            .iter()
+            .map(|[x, y, z]| [*x, *y, *z - 0.25])
+            .collect();
+        data.model_mesh_vert_mut()[..second].copy_from_slice(&lowered);
+        data.model_mesh_normal_mut()[..second_normal].fill([0.0, 0.0, 1.0]);
+        assert_eq!(&data.model().mesh_vert()[..second], lowered.as_slice());
+        assert!(data.model().mesh_normal()[..second_normal].iter().all(|n| *n == [0.0, 0.0, 1.0]));
+        assert_eq!(&data.model().mesh_vert()[second..], untouched_vertices.as_slice());
+        assert_eq!(&data.model().mesh_normal()[second_normal..], untouched_normals.as_slice());
+        data.forward();
+        assert!(data.qacc().iter().all(|a| a.is_finite()));
     }
 
     /// Verifies that the eq_active bool slice matches the raw FFI pointer values.
