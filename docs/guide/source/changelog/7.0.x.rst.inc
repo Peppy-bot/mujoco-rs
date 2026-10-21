@@ -56,16 +56,18 @@
 
 *Allocation-free Jacobians*
 
-- |mj_data| gains an allocation-free variant of every Jacobian method, which writes into a buffer
-  that the caller keeps, so a control loop no longer allocates two vectors per call:
+- |mj_data| gains an allocation-free variant of the remaining Jacobian methods, which writes into
+  a buffer that the caller keeps, so a control loop no longer allocates two vectors per call:
   :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>jac_into` :sup:`new`,
   :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>jac_body_into` :sup:`new`,
   :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>jac_body_com_into` :sup:`new`,
-  :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>jac_subtree_com_into`
-  :sup:`new`,
-  :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>jac_geom_into` :sup:`new`,
-  :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>jac_site_into` :sup:`new` and
-  :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>angmom_mat_into` :sup:`new`.
+  :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>jac_geom_into` :sup:`new` and
+  :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>jac_site_into` :sup:`new`.
+  As :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>jac_subtree_com_into` and
+  :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>angmom_mat_into` do, each
+  takes the ids first and the buffers last, panics on a bad id or a short buffer, and has a
+  fallible ``try_`` variant (:docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>try_jac_into`
+  :sup:`new` and so on).
 - The guide gains a :ref:`performance <simulation_performance>` section that covers the thread
   pool and buffer reuse.
 
