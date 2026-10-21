@@ -119,7 +119,7 @@ mod build_dependencies {
             ["mjModel_", "mjData_", "mjvScene_", "mjrContext_", "mjVFS_", "mjSpec_"];
         // mjpResourceProvider has a bare `pub type MjpResourceProvider` alias but no safe API
         // consumes/produces it (the only consumer is the unwrapped unsafe FFI
-        // mjp_registerResourceProvider) and it has no accessors, so it is reachable only through
+        // mjp_registerProvider) and it has no accessors, so it is reachable only through
         // unsafe FFI -- treat it as internal and keep its (pointer) fields public.
         const INTERNAL_STRUCTS: [&str; 9] = [
             "mjCache_", "mjpDecoder", "mjpEncoder", "mjpPlugin_",

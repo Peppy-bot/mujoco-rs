@@ -445,8 +445,7 @@ impl MjModel {
     /// # Errors
     /// Returns [`MjModelError::LoadFailed`] if MuJoCo fails to parse the MJB buffer.
     /// # Panics
-    /// When the linked MuJoCo version does not match the expected from MuJoCo-rs, or when `data`
-    /// is longer than [`i32::MAX`] bytes.
+    /// When the linked MuJoCo version does not match the expected from MuJoCo-rs.
     pub fn from_buffer(data: &[u8]) -> Result<Self, MjModelError> {
         assert_mujoco_version();
         unsafe {
@@ -874,7 +873,7 @@ impl MjModel {
         }
         unsafe { mj_saveModel(
             self.ffi(), ptr::null(),
-            buffer.as_mut_ptr() as *mut c_void, buffer.len() as i32
+            buffer.as_mut_ptr() as *mut c_void, checked_c_len(buffer.len())
         ) };
         Ok(())
     }
@@ -1404,9 +1403,9 @@ impl MjModel {
         [ffi] nflexbending: MjtSize; "number of bending parameters in all flexes";
         [ffi] nefm0dof: MjtSize; "number of dofs covered by the constant metric factor.";
         [ffi] nefm0L: MjtSize; "number of non-zeros in the constant metric factor.";
+        [ffi] nefmCvert: MjtSize; "number of sparse metric factor ordering slots.";
         [ffi] nflexelemedge: MjtSize; "number of element edge ids in all flexes.";
         [ffi] nflexshelldata: MjtSize; "number of shell fragment vertex ids in all flexes.";
-        [ffi] nflexevpair: MjtSize; "number of element-vertex pairs in all flexes.";
         [ffi] nflextexcoord: MjtSize; "number of vertices with texture coordinates.";
         [ffi] nJfe: MjtSize; "number of non-zeros in sparse flexedge Jacobian matrix.";
         [ffi] nJfv: MjtSize; "number of non-zeros in sparse flexvert Jacobian matrix.";
@@ -1646,7 +1645,6 @@ impl MjModel {
         flex_friction: &[[MjtNum; 3] [force]; "friction for (slide, spin, roll)"; ffi().nflex],
         flex_margin: &[MjtNum; "geometric inflation for contact"; ffi().nflex],
         flex_gap: &[MjtNum; "additional contact detection buffer"; ffi().nflex],
-        flex_internal: &[MjtBool; "internal flex collision enabled"; ffi().nflex],
         flex_selfcollide: &[MjtFlexSelf [force]; "self collision mode"; ffi().nflex],
         flex_activelayers: &[i32; "number of active element layers, 3D only"; ffi().nflex],
         flex_passive: &[i32; "passive collisions enabled"; ffi().nflex],
@@ -1669,8 +1667,6 @@ impl MjModel {
         (mut = unsafe) flex_bendingadr: &[i32; "first bending data address"; ffi().nflex],
         (mut = unsafe) flex_shellnum: &[i32; "number of shells"; ffi().nflex],
         (mut = unsafe) flex_shelldataadr: &[i32; "first shell data address"; ffi().nflex],
-        (mut = unsafe) flex_evpairadr: &[i32; "first evpair address"; ffi().nflex],
-        (mut = unsafe) flex_evpairnum: &[i32; "number of evpairs"; ffi().nflex],
         (mut = unsafe) flex_texcoordadr: &[i32; "address in flex_texcoord; -1: none"; ffi().nflex],
         (mut = unsafe) flex_nodebodyid: &[i32; "node body ids"; ffi().nflexnode],
         (mut = unsafe) flex_vertbodyid: &[i32; "vertex body ids"; ffi().nflexvert],
@@ -1684,7 +1680,6 @@ impl MjModel {
         (mut = unsafe) flex_elemedge: &[i32; "element edge ids"; ffi().nflexelemedge],
         (mut = unsafe) flex_elemlayer: &[i32; "element distance from surface, 3D only"; ffi().nflexelem],
         (mut = unsafe) flex_shell: &[i32; "shell fragment vertex ids (dim per frag)"; ffi().nflexshelldata],
-        (mut = unsafe) flex_evpair: &[[i32; 2] [force]; "(element, vertex) collision pairs"; ffi().nflexevpair],
         flex_vert: &[[MjtNum; 3] [force]; "vertex positions in local body frames"; ffi().nflexvert],
         flex_vert0: &[[MjtNum; 3] [force]; "vertex positions in qpos0 on [0, 1]^d"; ffi().nflexvert],
         flex_vertmetric: &[[MjtNum; 4] [force]; "inverse of reference shape matrix"; ffi().nflexvert],
@@ -1701,6 +1696,7 @@ impl MjModel {
         (mut = unsafe) efm0_L_rowadr: &[i32; "constant metric factor row addresses"; ffi().nefm0dof],
         (mut = unsafe) efm0_L_colind: &[i32; "constant metric factor column indices"; ffi().nefm0L],
         efm0_L: &[MjtNum; "factor of M + (dt^2+dt*d)*K_bend"; ffi().nefm0L],
+        (mut = unsafe) efmC_perm: &[i32; "sparse factor order: vertex dof or -1"; ffi().nefmCvert],
         flex_damping: &[MjtNum; "Rayleigh's damping coefficient"; ffi().nflex],
         flex_edgestiffness: &[MjtNum; "edge stiffness"; ffi().nflex],
         flex_edgedamping: &[MjtNum; "edge damping"; ffi().nflex],
@@ -2312,6 +2308,7 @@ info_with_view!(Model, key,
 #[expect(clippy::needless_range_loop,
          reason = "the loop indices drive FFI pointer arithmetic, ptr.add(i * stride + j)")]
 mod tests {
+    use crate::wrappers::mj_editing::{MjSpec, SpecItem};
     use crate::assert_relative_eq;
 
     use super::*;
@@ -3001,11 +2998,10 @@ mod tests {
     /// elsewhere.
     #[test]
     fn test_every_dropped_size_follows_from_a_count_table() {
-        let model = MjModel::from_xml_string(
+        let mut spec = MjSpec::from_xml_string(
             "<mujoco><asset>\
              <texture name='t1' type='2d' builtin='checker' width='17' height='23' rgb1='1 0 0' rgb2='0 1 0'/>\
              <texture name='t2' type='cube' builtin='flat' width='8' height='8' rgb1='1 1 1'/>\
-             <texture name='t3' type='2d' builtin='flat' width='4' height='6' nchannel='4' rgb1='1 1 1'/>\
              <material name='mat' texture='t1'/>\
              <hfield name='hf' nrow='7' ncol='11' size='1 1 1 0.1'/>\
              <mesh name='ms' vertex='0 0 0  1 0 0  0 1 0  0 0 1' texcoord='0 0  1 0  0 1  1 1'/>\
@@ -3035,6 +3031,16 @@ mod tests {
              <jointpos joint='jh'/><accelerometer site='s2'/><tendonpos tendon='td'/>\
              <user objtype='site' objname='s2' dim='5' needstage='vel'/></sensor></mujoco>"
         ).unwrap();
+        // MuJoCo generates builtin textures with 3 channels only, so the 4-channel one comes as
+        // pixel data.
+        spec.add_texture()
+            .with_name("t3")
+            .with_type(MjtTexture::mjTEXTURE_2D)
+            .with_width(4)
+            .with_height(6)
+            .with_nchannel(4)
+            .set_data(&[255u8; 4 * 6 * 4]);
+        let model = spec.compile().unwrap();
 
         let sum = |table: &[i32]| table.iter().map(|&n| i64::from(n)).sum::<MjtSize>();
         let product = |first: &[i32], second: &[i32]| first.iter().zip(second)

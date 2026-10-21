@@ -103,6 +103,12 @@ pub type MjtConflict = mjtConflict;
 /// Type of orientation specifier.
 pub type MjtOrientation = mjtOrientation;
 
+/// Physical policy of a frame's scale.
+pub type MjtScaling = mjtScaling;
+
+/// Element an actuator is written with.
+pub type MjtActuator = mjtActuator;
+
 /// Compiler timing categories, used in `mjs_getTimer`.
 pub type MjtCTimer = mjtCTimer;
 /*******************************************************/
@@ -158,6 +164,8 @@ impl MjsCompiler {
         [ffi, ffi_mut] usethread: bool;               "use multiple threads to speed up compiler.";
         [ffi, ffi_mut] fusestatic: bool;              "fuse static bodies with parent.";
         [ffi, ffi_mut] saveinertial: bool;            "save explicit inertial clause for all bodies to XML.";
+        [ffi, ffi_mut] savecompiled: bool;            "save values as compiled, not as written in the spec.";
+        [ffi, ffi_mut] savecanonical: bool;           "save quaternions and radians, not the notation of the spec.";
         [ffi, ffi_mut] alignfree: bool;               "align free joints with inertial frame.";
     ]}
 
@@ -469,8 +477,7 @@ impl MjSpec {
     /// returning a new mjModel instance that takes the edits into account.
     /// # Errors
     /// Returns [`MjEditError::CompileFailed`] if the model fails to compile, including when a
-    /// texture has a builtin pattern set while its `nchannel` is less than 3, and when a texture
-    /// has a negative dimension or a pixel count that does not fit in an [`i32`].
+    /// texture has a negative dimension or a pixel count that does not fit in an [`i32`].
     pub fn compile(&mut self) -> Result<MjModel, MjEditError> {
         self.compile_impl(None)
     }
@@ -478,23 +485,16 @@ impl MjSpec {
     /// Same as [`MjSpec::compile`], compiling [`MjSpec`] to [`MjModel`], but taking assets (meshes, heightfields) from `vfs`.
     /// # Errors
     /// Returns [`MjEditError::CompileFailed`] if the model fails to compile, including when a
-    /// texture has a builtin pattern set while its `nchannel` is less than 3, and when a texture
-    /// has a negative dimension or a pixel count that does not fit in an [`i32`].
+    /// texture has a negative dimension or a pixel count that does not fit in an [`i32`].
     pub fn compile_with_vfs(&mut self, vfs: &MjVfs) -> Result<MjModel, MjEditError> {
         self.compile_impl(Some(vfs))
     }
 
     /// Compilation implementation of [`MjSpec::compile_with_vfs`] and [`MjSpec::compile`].
     fn compile_impl(&mut self, maybe_vfs: Option<&MjVfs>) -> Result<MjModel, MjEditError> {
-        // The builtin generators write 3 bytes per pixel into an `nchannel*width*height` buffer,
-        // and the setters are independent, so `compile` is the only place to check them together.
+        // MuJoCo multiplies a texture's nchannel, width and height as ints, and the setters are
+        // independent, so `compile` is the only place to check them together.
         for texture in self.texture_iter() {
-            if texture.builtin() != MjtBuiltin::mjBUILTIN_NONE && texture.nchannel() < 3 {
-                return Err(MjEditError::CompileFailed(
-                    "texture with a builtin pattern requires nchannel >= 3".to_owned(),
-                ));
-            }
-
             let (nchannel, width, height) = (texture.nchannel(), texture.width(), texture.height());
             if nchannel < 0 || width < 0 || height < 0 {
                 return Err(MjEditError::CompileFailed(
@@ -1198,6 +1198,14 @@ impl MjsFrame {
             [ffi, ffi_mut] pos: &[f64; 3];               "frame position.";
             [ffi, ffi_mut] quat: &[f64; 4];              "frame orientation.";
             [ffi, ffi_mut] alt: &MjsOrientation;         "alternative orientation.";
+            [ffi, ffi_mut] scale: &[f64; 3];             "scale of the frame's contents.";
+        ]
+    }
+
+    getter_setter! {
+        [&] with, get, set, [
+            [ffi, ffi_mut] scaling: MjtScaling;          "physical policy of the scale.";
+            [ffi, ffi_mut] massscale: f64;               "mass factor of the contents; 0: ratio of volumes.";
         ]
     }
 
@@ -1289,6 +1297,7 @@ impl MjsActuator {
     nested_handle!(plugin: MjsPluginReference; "actuator plugin.");
 
     getter_setter!([&] with, get, set, [
+        [ffi, ffi_mut] type_ + _: MjtActuator;        "element the actuator is written with.";
         [ffi, ffi_mut] gaintype: MjtGain;             "gain type.";
         [ffi, ffi_mut] biastype: MjtBias;             "bias type.";
         [ffi, ffi_mut] dyntype: MjtDyn;               "dyn type.";
@@ -1760,13 +1769,13 @@ impl MjsFlex {
             [ffi, ffi_mut] damping: f64;            "Rayleigh's damping.";
             [ffi, ffi_mut] thickness: f64;          "thickness (2D only).";
             [ffi, ffi_mut] elastic2d: i32;          "2D passive forces; 0: none, 1: bending, 2: stretching, 3: both.";
+            [ffi, ffi_mut] elastic3d: i32;          "experimental 3D material; 0: Saint Venant-Kirchhoff, 1: Stable Neo-Hookean.";
             [ffi, ffi_mut] order: i32;              "interpolation order (1: trilinear, 2: quadratic).";
         ]
     }
 
     getter_setter! {
         [&] with, get, set, [
-            [ffi, ffi_mut] internal: bool;       "enable internal collisions.";
             [ffi, ffi_mut] flatskin: bool;       "render flex skin with flat shading.";
             [ffi, ffi_mut] passive: bool;        "mode for passive collisions.";
         ]        
@@ -2282,6 +2291,8 @@ impl MjsMesh {
         usernormal: f32;             "user normal data.";
         usertexcoord: f32;           "user texcoord data.";
         userface: i32;               "user vertex indices.";
+        usernode: f64;               "user volume node coordinates.";
+        usertet: i32;                "user tetrahedral cell indices.";
     }
 
     vec_set! {
@@ -2403,7 +2414,7 @@ impl MjsTexture {
 
     getter_setter! {
         [&] with, get, set, [
-            // A builtin pattern needs `nchannel >= 3`; `MjSpec::compile` enforces that.
+            // A builtin pattern needs `nchannel == 3`; MuJoCo's compiler enforces that.
             [ffi, ffi_mut] nchannel: i32; "number of channels.";
         ]
     }
@@ -2631,7 +2642,7 @@ pub struct MjFlexcompConfig<'a> {
     pub quat: Option<[f64; 4]>,
     /// Flexcomp origin used to build a volumetric mesh from a surface mesh.
     pub origin: Option<[f64; 3]>,
-    /// File to load the surface or volumetric mesh from.
+    /// File to load the surface or volumetric mesh from, or the name of a mesh asset of the spec.
     pub file: Option<&'a str>,
     /// Virtual file system used to resolve the mesh file.
     pub vfs: Option<&'a MjVfs>,
@@ -2796,6 +2807,7 @@ impl MjsBody {
             [ffi, ffi_mut] mocap: bool;                   "whether this is a mocap body.";
             [ffi, ffi_mut] explicitinertial: bool;        "whether to save the body with explicit inertial clause.";
             [ffi, ffi_mut] simple: bool;                  "simple body optimization (false: disabled, true: auto).";
+            [ffi, ffi_mut] fuse: bool;                    "fuse with parent when static (false: disabled, true: auto).";
         ]
     }
 
@@ -4135,50 +4147,51 @@ mod tests {
             "RGB texture slot should be resolved (not -1)");
     }
 
-    /// A builtin texture with `nchannel < 3` must be rejected by `compile()` rather than
-    /// heap-overflowing in MuJoCo's builtin generators (which write 3 bytes per pixel).
+    /// MuJoCo's builtin generators write 3 bytes per pixel, so `compile()` must reject a builtin
+    /// pattern with any other `nchannel` before they overflow or underfill the texture buffer.
     #[test]
     fn test_builtin_texture_nchannel_rejected() {
+        let builtin_spec = |nchannel| {
+            let mut spec = MjSpec::new();
+            spec.add_texture()
+                .with_name("tex")
+                .with_type(MjtTexture::mjTEXTURE_2D)
+                .with_builtin(MjtBuiltin::mjBUILTIN_CHECKER)
+                .with_rgb1([0.9, 0.9, 0.9])
+                .with_rgb2([0.1, 0.1, 0.1])
+                .with_width(64)
+                .with_height(64)
+                .set_nchannel(nchannel);
+            spec
+        };
+
+        for nchannel in [1, 4] {
+            let err = builtin_spec(nchannel).compile().unwrap_err();
+            assert!(matches!(&err, MjEditError::CompileFailed(msg) if msg.contains("3 channels")),
+                "compile must reject a builtin texture with {nchannel} channels, got {err:?}");
+        }
+        assert!(builtin_spec(3).compile().is_ok(), "a 3-channel builtin texture should compile");
+    }
+
+    /// A "mesh" flexcomp that names a mesh asset builds its tetrahedra from the volume data that
+    /// `set_usernode` and `set_usertet` write, not from the surface.
+    #[test]
+    fn test_flexcomp_from_mesh_volume() {
+        const NODES: [f64; 12] = [0.0, 0.0, 0.0,  1.0, 0.0, 0.0,  0.0, 1.0, 0.0,  0.0, 0.0, 1.0];
         let mut spec = MjSpec::new();
-        spec.add_texture()
-            .with_name("badtex")
-            .with_type(MjtTexture::mjTEXTURE_2D)
-            .with_builtin(MjtBuiltin::mjBUILTIN_CHECKER)
-            .with_rgb1([0.9, 0.9, 0.9])
-            .with_rgb2([0.1, 0.1, 0.1])
-            .with_width(64)
-            .with_height(64)
-            .set_nchannel(1);
+        let mesh = spec.add_mesh().with_name("tet");
+        mesh.set_uservert(&NODES.map(|c| c as f32));
+        mesh.set_userface(&[0, 2, 1,  0, 1, 3,  0, 3, 2,  1, 2, 3]);
+        mesh.set_usernode(&NODES);
+        mesh.set_usertet(&[0, 1, 2, 3]);
+        spec.world_body_mut().add_flexcomp("solid", &MjFlexcompConfig {
+            r#type: Some("mesh"), dim: 3, file: Some("tet"), ..Default::default()
+        });
 
-        let err = spec.compile().unwrap_err();
-        assert!(matches!(&err, MjEditError::CompileFailed(msg) if msg.contains("nchannel")),
-            "compile must reject nchannel < 3 builtin texture, got {err:?}");
-
-        // nchannel == 3 (and a builtin pattern) compiles cleanly.
-        let mut ok_spec = MjSpec::new();
-        ok_spec.add_texture()
-            .with_name("goodtex")
-            .with_type(MjtTexture::mjTEXTURE_2D)
-            .with_builtin(MjtBuiltin::mjBUILTIN_CHECKER)
-            .with_rgb1([0.9, 0.9, 0.9])
-            .with_rgb2([0.1, 0.1, 0.1])
-            .with_width(64)
-            .with_height(64)
-            .set_nchannel(3);
-        assert!(ok_spec.compile().is_ok(), "nchannel == 3 builtin texture should compile");
-
-        // Without a builtin pattern the texture still fails to compile, but through MuJoCo's own
-        // error, which scopes the guard to the builtin path.
-        let mut no_builtin = MjSpec::new();
-        no_builtin.add_texture()
-            .with_name("plain")
-            .with_type(MjtTexture::mjTEXTURE_2D)
-            .with_width(64)
-            .with_height(64)
-            .set_nchannel(1);
-        assert!(matches!(no_builtin.compile().unwrap_err(),
-                MjEditError::CompileFailed(msg) if !msg.contains("nchannel")),
-            "nchannel < 3 without a builtin pattern should not trip the nchannel guard");
+        let model = spec.compile().unwrap();
+        assert_eq!(model.flex_dim(), &[3]);
+        assert_eq!(model.nflexvert(), 4);
+        assert_eq!(model.nflexelem(), 1);
     }
 
     /// Verifies `MjsFlex::cellcount` (read-only `&[i32; 3]`) and `order` (read-write `i32`)
