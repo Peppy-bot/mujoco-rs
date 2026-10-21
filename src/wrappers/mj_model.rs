@@ -507,7 +507,8 @@ impl MjModel {
     /// `Ok(())` on success.
     /// # Errors
     /// - [`MjModelError::InvalidUtf8Path`] if the path contains invalid UTF-8.
-    /// - [`MjModelError::SaveFailed`] with MuJoCo's error message if saving fails.
+    /// - [`MjModelError::SaveFailed`] with MuJoCo's error message if saving fails, which it does
+    ///   when `self` was not compiled from the last loaded XML.
     /// # Panics
     /// When the path contains '\0' characters, a panic occurs.
     pub fn save_last_xml<T: AsRef<Path>>(&self, filename: T) -> Result<(), MjModelError> {
@@ -541,7 +542,7 @@ impl MjModel {
     /// XML, MJB and TXT encoders will be used, respectively. Similarly, the MuJoCo's internal
     /// encoders will be used when `content_type` is 'text/xml' or 'text/plain'.
     /// The XML encoder writes the spec of the last [`MjModel::from_xml`] (or `_vfs`, `_string`)
-    /// load and fails when there is none.
+    /// load and fails when there is none, or when `self` was not compiled from it.
     /// 
     /// This is a wrapper for [`mj_encode`].
     /// 
@@ -2575,38 +2576,17 @@ mod tests {
         assert_relative_eq!(quat[3], 0.5_f64.sqrt(), epsilon = 1e-12);
     }
 
-    /// Tests if the model can be loaded and then saved.
-    #[test]
-    fn test_model_load_save() {
-        const MODEL_SAVE_XML_PATH: &str = "./__TMP_MODEL1.xml";
-        const MODEL_INVALID_SAVE_XML_PATH: &str = "/some/non-existent/path/";
-
-        let model = MjModel::from_xml_string(EXAMPLE_MODEL).expect("unable to load the model.");
-        model.save_last_xml(MODEL_SAVE_XML_PATH).expect("could not save the model XML.");      
-        fs::remove_file(MODEL_SAVE_XML_PATH).unwrap();
-
-        // Try to get an error
-        assert!(model.save_last_xml(MODEL_INVALID_SAVE_XML_PATH).is_err());
-    }
-
     #[test]
     fn test_model_encode() {
         const PATH_MJB: &str = "./__TMP_MODEL_ENCODE.mjb";
-        const PATH_XML: &str = "./__TMP_MODEL_ENCODE.xml";
 
+        // The XML encoder writes the spec of the last XML load, which a parallel test replaces,
+        // so tests/last_loaded_xml.rs covers it.
         let model = MjModel::from_xml_string(EXAMPLE_MODEL).expect("unable to load the model.");
         model.encode(PATH_MJB, "").unwrap();
-        model.encode_with_vfs(PATH_XML, "text/xml", &MjVfs::new()).unwrap();
-
         let encoded = MjModel::from_buffer(&fs::read(PATH_MJB).unwrap()).unwrap();
-        // The XML encoder writes the spec of the last XML load, which a parallel test may replace,
-        // so only the MJB round trip is compared against `model`.
-        let reloaded = MjModel::from_xml(PATH_XML);
         fs::remove_file(PATH_MJB).unwrap();
-        fs::remove_file(PATH_XML).unwrap();
-
         assert!(model.is_compatible_with_model(&encoded));
-        reloaded.unwrap();
 
         assert!(model.encode("/some/non-existent/path/model.xml", "").is_err());
     }
