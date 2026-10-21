@@ -396,12 +396,12 @@ The world body and a frame do carry it, and it returns
     }
 
 ``delete`` is ``unsafe`` because MuJoCo cannot answer whether it already deleted an element. It
-keeps a deleted element allocated until the specification drops, so a second deletion of the same
-element frees it twice. The caller carries three obligations:
+frees an element as it deletes it, so a second deletion of the same element, or a use of its handle
+after the deletion, reaches freed memory. The caller carries three obligations:
 
 - Delete each element at most once.
 - Do not delete an element that the deletion of a body already took out of the specification.
-- Do not use the handle of an element that the deletion of a body freed.
+- Do not use the handle of the deleted element, or of an element that the deletion of a body freed.
 
 Deleting a body deletes its whole subtree, and it frees every keyframe, and every actuator, sensor,
 tendon, equality, pair and exclude that refers to the subtree. The last two obligations follow from

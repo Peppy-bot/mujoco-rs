@@ -140,11 +140,12 @@ pub trait SpecObject: SpecItem {
     ///   specification holds this one.
     ///
     /// # Safety
-    /// - Delete each element at most once. MuJoCo keeps the element allocated until the
-    ///   specification drops, so a second deletion frees it twice.
+    /// - Delete each element at most once. MuJoCo frees the element as it deletes it, so a second
+    ///   deletion reaches freed memory.
     /// - Do not delete an element that the deletion of a body already took out of the
     ///   specification. An iterator collected before that deletion still hands out its handle.
-    /// - Do not use the handle of an element that the deletion of a body freed.
+    /// - Do not use the handle of the deleted element, or of an element that the deletion of a body
+    ///   freed.
     ///
     /// # Examples
     /// ```
@@ -653,8 +654,8 @@ mod tests {
             // SAFETY: the borrow of the geom ends with the call, so no handle reaches the element
             // after its deletion.
             unsafe { geom.delete() }.unwrap();
-            assert_eq!(drops.get(), 0, "memory is supposed to be freed after the spec is dropped");
+            assert_eq!(drops.get(), 1, "the deletion must drop the value the element held");
         }
-        assert_eq!(drops.get(), 1, "the spec must drop the value a deleted element held");
+        assert_eq!(drops.get(), 1, "dropping the spec must not drop the value a second time");
     }
 }
