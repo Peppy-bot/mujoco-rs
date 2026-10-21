@@ -1,13 +1,13 @@
-7.0.0 (MuJoCo 3.14.0)
+7.0.0 (MuJoCo 3.16.0)
 ======================
 
 .. rubric:: Breaking changes
 
-*MuJoCo FFI upgraded to 3.14.0*
+*MuJoCo FFI upgraded to 3.16.0*
 
-- MuJoCo-rs now builds against MuJoCo 3.14.0 FFI. This is a breaking dependency-level change for
+- MuJoCo-rs now builds against MuJoCo 3.16.0 FFI. This is a breaking dependency-level change for
   consumers tied to older MuJoCo C ABI details. See MuJoCo's changelog for this release:
-  https://mujoco.readthedocs.io/en/3.14.0/changelog.html
+  https://mujoco.readthedocs.io/en/3.16.0/changelog.html
 
 *Control-history reads return every control of the actuator*
 
@@ -56,23 +56,25 @@
 
 *Allocation-free Jacobians*
 
-- |mj_data| gains an allocation-free variant of every Jacobian method, which writes into a buffer
-  that the caller keeps, so a control loop no longer allocates two vectors per call:
+- |mj_data| gains an allocation-free variant of the remaining Jacobian methods, which writes into
+  a buffer that the caller keeps, so a control loop no longer allocates two vectors per call:
   :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>jac_into` :sup:`new`,
   :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>jac_body_into` :sup:`new`,
   :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>jac_body_com_into` :sup:`new`,
-  :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>jac_subtree_com_into`
-  :sup:`new`,
-  :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>jac_geom_into` :sup:`new`,
-  :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>jac_site_into` :sup:`new` and
-  :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>angmom_mat_into` :sup:`new`.
+  :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>jac_geom_into` :sup:`new` and
+  :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>jac_site_into` :sup:`new`.
+  As :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>jac_subtree_com_into` and
+  :docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>angmom_mat_into` do, each
+  takes the ids first and the buffers last, panics on a bad id or a short buffer, and has a
+  fallible ``try_`` variant (:docs-rs:`~~mujoco_rs::wrappers::mj_data::<struct>MjData::<method>try_jac_into`
+  :sup:`new` and so on).
 - The guide gains a :ref:`performance <simulation_performance>` section that covers the thread
   pool and buffer reuse.
 
 .. rubric:: Bug fixes
 
-- A static link (``MUJOCO_STATIC_LINK_DIR``) now loads OBJ and STL mesh files and reads and
-  writes ``.mjz`` archives. MuJoCo registers those codecs from constructors in objects nothing
+- A static link (``MUJOCO_STATIC_LINK_DIR``) now loads OBJ, STL and GMSH mesh files and reads
+  and writes ``.mjz`` archives. MuJoCo registers those codecs from constructors in objects nothing
   references, so the linker dropped them: every mesh file failed with "no decoder found" and
   ``mj_encode`` reported "no encoder found". The ``mujoco`` submodule's static build now carries
   a table that names them, so a plain archive link keeps them.

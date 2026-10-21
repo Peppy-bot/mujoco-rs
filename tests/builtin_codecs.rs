@@ -1,5 +1,5 @@
 //! Integration tests for the codecs MuJoCo registers from constructors: the `.mjz` archive
-//! encoder and decoder and the OBJ and STL mesh decoders.
+//! encoder and decoder and the OBJ, STL and GMSH mesh decoders.
 //!
 //! Each of them lives in a translation unit nothing else references, so a static link keeps it
 //! only through the table `libmujoco.a` carries for that purpose. Without it a static link
@@ -80,21 +80,29 @@ fn tetrahedron_stl() -> Vec<u8> {
 /// The same tetrahedron as a Wavefront OBJ.
 const TETRAHEDRON_OBJ: &str = "v 0 0 0\nv 1 0 0\nv 0 1 0\nv 0 0 1\nf 1 3 2\nf 1 2 4\nf 1 4 3\nf 2 3 4\n";
 
+/// The same tetrahedron as a GMSH 2.2 volume mesh: four nodes and one 4-node tetrahedron.
+const TETRAHEDRON_MSH: &str = "$MeshFormat\n2.2 0 8\n$EndMeshFormat\n\
+    $Nodes\n4\n1 0 0 0\n2 1 0 0\n3 0 1 0\n4 0 0 1\n$EndNodes\n\
+    $Elements\n1\n1 4 0 1 2 3 4\n$EndElements\n";
+
 #[test]
-fn obj_and_stl_meshes_load_through_the_registered_decoders() {
+fn obj_stl_and_gmsh_meshes_load_through_the_registered_decoders() {
     let dir = ScratchDir::new("meshes");
     std::fs::write(dir.0.join("tet.obj"), TETRAHEDRON_OBJ).unwrap();
     std::fs::write(dir.0.join("tet.stl"), tetrahedron_stl()).unwrap();
+    std::fs::write(dir.0.join("tet.msh"), TETRAHEDRON_MSH).unwrap();
     let xml = format!(
         "<mujoco>
             <compiler meshdir='{}'/>
             <asset>
                 <mesh name='obj' file='tet.obj'/>
                 <mesh name='stl' file='tet.stl'/>
+                <mesh name='msh' content_type='model/vnd.gmsh' file='tet.msh'/>
             </asset>
             <worldbody>
                 <geom type='mesh' mesh='obj'/>
                 <geom type='mesh' mesh='stl' pos='2 0 0'/>
+                <geom type='mesh' mesh='msh' pos='4 0 0'/>
             </worldbody>
         </mujoco>",
         dir.0.display()
@@ -102,7 +110,7 @@ fn obj_and_stl_meshes_load_through_the_registered_decoders() {
 
     let model = MjModel::from_xml_string(&xml).unwrap();
 
-    assert_eq!(model.nmesh(), 2);
-    assert_eq!(model.mesh_vertnum(), &[4, 4]);
-    assert_eq!(model.mesh_facenum(), &[4, 4]);
+    assert_eq!(model.nmesh(), 3);
+    assert_eq!(model.mesh_vertnum(), &[4, 4, 4]);
+    assert_eq!(model.mesh_facenum(), &[4, 4, 4]);
 }
