@@ -110,7 +110,7 @@ impl<M: ModelType> MjData<M> {
     /// # Notes
     /// This method only validates the model memory layout.
     /// **Not all model parameters are safe (for correct simulation) to change at runtime.**
-    /// See [here](https://mujoco.readthedocs.io/en/3.17.0/programming/simulation.html#mjmodel-changes)
+    /// See [here](https://mujoco.readthedocs.io/en/4.0.0/programming/simulation.html#mjmodel-changes)
     /// to see what parameters can be changed.
     /// 
     /// If `M` implements [`ModelTypeMut`], prefer
@@ -163,13 +163,13 @@ impl<M: ModelType> MjData<M> {
     }
 
     info_method! { Data, [model], body, [
-        xfrc_applied: 6, xpos: 3, xquat: 4, xmat: 9, xipos: 3, ximat: 9, subtree_com: 3, cinert: 10,
+        xfrc_applied: 6, xpos: 3, xquat: 4, xmat: 9, xipos: 3, xiquat: 4, ximat: 9, subtree_com: 3, cinert: 10,
         crb: 10, cvel: 6, subtree_linvel: 3, subtree_angmom: 3, cacc: 6, cfrc_int: 6, cfrc_ext: 6,
         awake: 1
     ], [], []}
     info_method! { Data, [model], camera, [xpos: 3, xmat: 9], [], []}
-    info_method! { Data, [model], geom, [xpos: 3, xmat: 9], [], []}
-    info_method! { Data, [model], site, [xpos: 3, xmat: 9], [], []}
+    info_method! { Data, [model], geom, [xpos: 3, xquat: 4, xmat: 9], [], []}
+    info_method! { Data, [model], site, [xpos: 3, xquat: 4, xmat: 9], [], []}
     info_method! { Data, [model], light, [xpos: 3, xdir: 3], [], []}
 
     info_method! { Data, [model], actuator,
@@ -2083,7 +2083,7 @@ impl<M: ModelTypeMut> MjData<M> {
     /// (e.g., timestep, gravity) without having to rebuild the simulation.
     ///
     /// **Not all model parameters are safe to change at runtime.**
-    /// See [MuJoCo's documentation](https://mujoco.readthedocs.io/en/3.17.0/programming/simulation.html#mjmodel-changes)
+    /// See [MuJoCo's documentation](https://mujoco.readthedocs.io/en/4.0.0/programming/simulation.html#mjmodel-changes)
     /// for a list of parameters that are safe to change.
     ///
     /// Only available when the inner model type `M` implements [`ModelTypeMut`]
@@ -2270,7 +2270,7 @@ impl<M: ModelTypeMut> MjData<M> {
     /// 
     /// # Note
     /// MuJoCo aborts the process through `mjERROR` when the model is inconsistent.
-    /// See [MuJoCo's documentation](https://mujoco.readthedocs.io/en/3.17.0/programming/simulation.html#mjmodel-changes)
+    /// See [MuJoCo's documentation](https://mujoco.readthedocs.io/en/4.0.0/programming/simulation.html#mjmodel-changes)
     /// for information about safety of model changes.
     pub fn set_const(&mut self) {
         // SAFETY: All modifications are local to the owned data.
@@ -2306,6 +2306,7 @@ impl<M: ModelType> MjData<M> {
         qvel: &[MjtNum; "velocity"; model.ffi().nv],
         act: &[MjtNum; "actuator activation"; model.ffi().na],
         (mut = unsafe) history: &[MjtNum; "history buffer"; model.ffi().nhistory],
+        plastic: &[MjtNum; "plastic state"; model.ffi().nplastic],
         qacc_warmstart: &[MjtNum; "acceleration used for warmstart"; model.ffi().nv],
         plugin_state: &[MjtNum; "plugin state"; model.ffi().npluginstate],
         ctrl: &[MjtNum; "control"; model.ffi().nu],
@@ -2323,12 +2324,15 @@ impl<M: ModelType> MjData<M> {
         xquat: &[[MjtNum; 4] [force]; "Cartesian orientation of body frame"; model.ffi().nbody],
         xmat: &[[MjtNum; 9] [force]; "Cartesian orientation of body frame"; model.ffi().nbody],
         xipos: &[[MjtNum; 3] [force]; "Cartesian position of body com"; model.ffi().nbody],
+        xiquat: &[[MjtNum; 4] [force]; "Cartesian orientation of body inertia"; model.ffi().nbody],
         ximat: &[[MjtNum; 9] [force]; "Cartesian orientation of body inertia"; model.ffi().nbody],
         xanchor: &[[MjtNum; 3] [force]; "Cartesian position of joint anchor"; model.ffi().njnt],
         xaxis: &[[MjtNum; 3] [force]; "Cartesian joint axis"; model.ffi().njnt],
         geom_xpos: &[[MjtNum; 3] [force]; "Cartesian geom position"; model.ffi().ngeom],
+        geom_xquat: &[[MjtNum; 4] [force]; "Cartesian geom orientation"; model.ffi().ngeom],
         geom_xmat: &[[MjtNum; 9] [force]; "Cartesian geom orientation"; model.ffi().ngeom],
         site_xpos: &[[MjtNum; 3] [force]; "Cartesian site position"; model.ffi().nsite],
+        site_xquat: &[[MjtNum; 4] [force]; "Cartesian site orientation"; model.ffi().nsite],
         site_xmat: &[[MjtNum; 9] [force]; "Cartesian site orientation"; model.ffi().nsite],
         cam_xpos: &[[MjtNum; 3] [force]; "Cartesian camera position"; model.ffi().ncam],
         cam_xmat: &[[MjtNum; 9] [force]; "Cartesian camera orientation"; model.ffi().ncam],
@@ -2345,8 +2349,6 @@ impl<M: ModelType> MjData<M> {
         flexedge_hessian: &[[MjtNum; 9] [force]; "oriented off-diagonal Hessian blocks"; model.ffi().nflexedge],
         flexedge_J: &[MjtNum; "flex edge Jacobian"; model.ffi().nJfe],
         flexedge_length: &[MjtNum; "flex edge lengths"; model.ffi().nflexedge],
-        flexvert_J: &[[MjtNum; 2] [force]; "flex vertex Jacobian"; model.ffi().nJfv],
-        flexvert_length: &[[MjtNum; 2] [force]; "flex vertex lengths"; model.ffi().nflexvert],
         bvh_aabb_dyn: &[[MjtNum; 6] [force]; "global bounding box (center, size)"; model.ffi().nbvhdynamic],
         flexvert_lambda: &[MjtNum; "flex contact multiplier"; model.ffi().nflexvert],
         flexvert_conage: &[i32; "flex contact age: <0 loaded, >0 steps since"; model.ffi().nflexvert],
@@ -2532,6 +2534,7 @@ info_with_view!(Data, body,
      xquat: MjtNum,
      xmat: MjtNum,
      xipos: MjtNum,
+     xiquat: MjtNum,
      ximat: MjtNum,
      subtree_com: MjtNum,
      cinert: MjtNum,
@@ -2554,6 +2557,7 @@ info_with_view!(Data, camera,
 
 info_with_view!(Data, geom,
     [[geom_] xpos: MjtNum,
+     [geom_] xquat: MjtNum,
      [geom_] xmat: MjtNum],
     [],
     [], M: ModelType);
@@ -2595,6 +2599,7 @@ info_with_view!(Data, sensor,
 
 info_with_view!(Data, site,
     [[site_] xpos: MjtNum,
+     [site_] xquat: MjtNum,
      [site_] xmat: MjtNum],
     [],
     [], M: ModelType);
@@ -4726,8 +4731,6 @@ mod test {
         // Model has no flexes, so these should be empty
         assert!(data.flexvert_xpos().is_empty(), "no flex -> empty flexvert_xpos");
         assert!(data.flexelem_aabb().is_empty(), "no flex -> empty flexelem_aabb");
-        assert!(data.flexvert_j().is_empty(), "no flex -> empty flexvert_J");
-        assert!(data.flexvert_length().is_empty(), "no flex -> empty flexvert_length");
         assert!(data.flexedge_j().is_empty(), "no flex -> empty flexedge_J");
         assert!(data.flexedge_length().is_empty(), "no flex -> empty flexedge_length");
     }
@@ -6241,5 +6244,66 @@ mod test {
         let source = model.make_data();
         let mut destination = model.make_data();
         let _ = destination.copy_state_from_data(&source, 1 << MjtState::mjNSTATE as u32);
+    }
+
+    /// The Cartesian quaternions of body inertias, geoms and sites describe the same rotations as
+    /// their matrices.
+    #[test]
+    fn test_cartesian_quaternions() {
+        const ROTATED_MODEL: &str = "\
+<mujoco>
+  <worldbody>
+    <body name=\"tilted\" euler=\"10 20 30\">
+      <freejoint/>
+      <geom type=\"box\" size=\".1 .2 .3\" euler=\"40 0 -15\"/>
+      <site name=\"tip\" euler=\"0 50 5\"/>
+    </body>
+  </worldbody>
+</mujoco>";
+        let model = MjModel::from_xml_string(ROTATED_MODEL).unwrap();
+        let mut data = model.make_data();
+        data.forward();
+
+        let assert_same_rotation = |quats: &[[MjtNum; 4]], mats: &[[MjtNum; 9]]| {
+            assert_eq!(quats.len(), mats.len());
+            for (quat, mat) in quats.iter().zip(mats) {
+                let mut from_quat = [0.0; 9];
+                crate::wrappers::fun::utility::mju_quat_2_mat(&mut from_quat, quat);
+                for (a, b) in from_quat.iter().zip(mat) {
+                    assert_relative_eq!(*a, *b, epsilon = 1e-12);
+                }
+            }
+        };
+        assert_same_rotation(data.xiquat(), data.ximat());
+        assert_same_rotation(data.geom_xquat(), data.geom_xmat());
+        assert_same_rotation(data.site_xquat(), data.site_xmat());
+
+        let site = data.site("tip").unwrap().view(&data);
+        assert_eq!(&site.xquat[..], &data.site_xquat()[0]);
+    }
+
+    /// The plastic state starts at the spring reference of a plastic joint and moves when the
+    /// joint is held past its yield threshold.
+    #[test]
+    fn test_plastic_state_yields() {
+        const PLASTIC_MODEL: &str = "\
+<mujoco>
+  <compiler angle=\"radian\"/>
+  <option gravity=\"0 0 0\"/>
+  <worldbody>
+    <body>
+      <joint name=\"bend\" type=\"hinge\" stiffness=\"1\" springref=\"0.25\" springyield=\"0.1\"/>
+      <geom size=\"0.1\" mass=\"1\"/>
+    </body>
+  </worldbody>
+</mujoco>";
+        let model = MjModel::from_xml_string(PLASTIC_MODEL).unwrap();
+        let mut data = model.make_data();
+        assert_eq!(data.plastic(), [0.25]);
+
+        // Holding the hinge 1 rad away from the reference exceeds the 0.1 rad threshold.
+        data.qpos_mut()[0] = 1.25;
+        data.step();
+        assert!(data.plastic()[0] > 0.25 + 0.5, "the reference must follow the joint past the threshold");
     }
 }

@@ -121,16 +121,17 @@ writable_tables! {
     body_sameframe,        body_contype,          body_conaffinity,      jnt_group,
     jnt_limited,           jnt_actfrclimited,     jnt_actgravcomp,       dof_simplenum,
     tree_sleep_policy,     geom_contype,          geom_conaffinity,      geom_group,
-    geom_priority,         geom_sameframe,        site_group,            site_sameframe,
-    cam_mode,              cam_projection,        cam_output,            light_mode,
-    light_type,            light_castshadow,      light_active,          flex_contype,
-    flex_conaffinity,      flex_priority,         flex_selfcollide,      flex_activelayers,
-    flex_passive,          flex_group,            flex_edgeequality,     flexedge_rigid,
-    flex_flatskin,         skin_group,            tex_colorspace,        tex_data,
-    mat_texuniform,        pair_signature,        exclude_signature,     eq_active0,
-    tendon_group,          tendon_limited,        tendon_actfrclimited,  actuator_actlimited,
-    actuator_actearly,     actuator_group,        actuator_forcelimited, actuator_ctrllimited,
-    sensor_datatype,       sensor_needstage,      bvh_depth,             oct_depth
+    geom_priority,         geom_sameframe,        geom_castshadow,       site_group,
+    site_sameframe,        cam_mode,              cam_projection,        cam_output,
+    light_mode,            light_type,            light_castshadow,      light_active,
+    flex_contype,          flex_conaffinity,      flex_priority,         flex_selfcollide,
+    flex_activelayers,     flex_passive,          flex_group,            flex_edgeequality,
+    flexedge_rigid,        flex_flatskin,         skin_group,            tex_colorspace,
+    tex_data,              mat_texuniform,        pair_signature,        exclude_signature,
+    eq_active0,            tendon_group,          tendon_limited,        tendon_actfrclimited,
+    actuator_actlimited,   actuator_actearly,     actuator_group,        actuator_forcelimited,
+    actuator_ctrllimited,  sensor_datatype,       sensor_needstage,      bvh_depth,
+    oct_depth
 }
 
 /// Reports whether `field` is a name field, a path field, the buffer size, a hull or tree
@@ -151,10 +152,17 @@ fn moved_mesh_xml() -> String {
 }
 
 /// Returns the names of the sizes and of the non-float tables that `mjxmacro.h` declares for
-/// `mjModel`.
+/// `mjModel`. The header comes from the downloaded release when the crate root holds one, else
+/// from the `mujoco` submodule that a static link builds.
 fn header_fields() -> (BTreeSet<String>, BTreeSet<String>) {
     let version = env!("CARGO_PKG_VERSION").split_once("+mj-").unwrap().1;
-    let path = format!("{}/mujoco-{version}/include/mujoco/mjxmacro.h", env!("CARGO_MANIFEST_DIR"));
+    let root = env!("CARGO_MANIFEST_DIR");
+    let downloaded = format!("{root}/mujoco-{version}/include/mujoco/mjxmacro.h");
+    let path = if std::path::Path::new(&downloaded).exists() {
+        downloaded
+    } else {
+        format!("{root}/mujoco/include/mujoco/mjxmacro.h")
+    };
     let header = std::fs::read_to_string(&path).unwrap_or_else(|err| panic!("cannot read {path}: {err}"));
     let section = |start: &str, end: &str| {
         let from = header.find(start).unwrap();

@@ -56,8 +56,8 @@ pub fn load_plugin_library<P: AsRef<Path>>(path: P) -> Result<(), MjPluginError>
 ///
 /// # Examples
 ///
-/// Load all MuJoCo plugins from the plugin directory (e.g. to enable PID actuators,
-/// cable elasticity simulation, SDF collision shapes, or custom sensors):
+/// Load all MuJoCo plugins from the plugin directory (e.g. to enable PID actuators, SDF
+/// collision shapes, or custom sensors):
 ///
 /// ```no_run
 /// use mujoco_rs::prelude::*;

@@ -58,7 +58,7 @@ const MODEL_VIS_SYNC_WARNING: &str = "[WARNING] Visualization options not synced
 const MODEL_STAT_SYNC_WARNING: &str = "[WARNING] Statistics not synced!";
 
 /// Maps [`MjtRndFlag`](crate::wrappers::mj_visualization::MjtRndFlag) to their string
-const GL_EFFECT_MAP: [&str; 11] = [
+const GL_EFFECT_MAP: [&str; 12] = [
     "Shadow",
     "Wireframe",
     "Reflection",
@@ -69,7 +69,8 @@ const GL_EFFECT_MAP: [&str; 11] = [
     "Depth",
     "Segment",
     "ID color",
-    "Cull face"
+    "Cull face",
+    "Post-process"
 ];
 const _: () = assert!(GL_EFFECT_MAP.len() == crate::mujoco_c::mjtRndFlag_::mjNRNDFLAG as usize);
 
@@ -206,7 +207,8 @@ const ENABLE_FLAGS: &[(&str, MjtEnableBit)] = &[
     ("Inverse Discrete", MjtEnableBit::mjENBL_INVDISCRETE),
     ("Sleep", MjtEnableBit::mjENBL_SLEEP),
     ("DiagExact", MjtEnableBit::mjENBL_DIAGEXACT),
-    ("IPC", MjtEnableBit::mjENBL_IPC)
+    ("IPC", MjtEnableBit::mjENBL_IPC),
+    ("Speculative", MjtEnableBit::mjENBL_SPECULATIVE)
 ];
 const _: () = assert!(ENABLE_FLAGS.len() == crate::mujoco_c::mjtEnableBit::mjNENABLE as usize);
 

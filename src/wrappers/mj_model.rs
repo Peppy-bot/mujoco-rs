@@ -120,6 +120,9 @@ pub type MjtSolver = mjtSolver;
 /// Equality constraint types. These values are used in `m->eq_type`.
 pub type MjtEq = mjtEq;
 
+/// Tendon types. These values are used in `m->tendon_type`.
+pub type MjtTendon = mjtTendon;
+
 /// Tendon wrapping object types. These values are used in `m->wrap_type`.
 pub type MjtWrap = mjtWrap;
 
@@ -222,6 +225,7 @@ unsafe impl bytemuck::Zeroable for mjtMark {}
 unsafe impl bytemuck::Zeroable for mjtSleepPolicy {}
 unsafe impl bytemuck::Zeroable for mjtSleepState {}
 unsafe impl bytemuck::Zeroable for mjtStereo {}
+unsafe impl bytemuck::Zeroable for mjtTendon {}
 unsafe impl bytemuck::Zeroable for mjtWrap {}
 
 // SAFETY: every enum below is fieldless with a `#[repr(u32)]`, so it holds no padding and every
@@ -233,6 +237,7 @@ unsafe impl bytemuck::NoUninit for _mjtGeomBase {}
 unsafe impl bytemuck::NoUninit for mjtEq {}
 unsafe impl bytemuck::NoUninit for mjtObj {}
 unsafe impl bytemuck::NoUninit for _mjtObjBase {}
+unsafe impl bytemuck::NoUninit for mjtTendon {}
 unsafe impl bytemuck::NoUninit for mjtWrap {}
 unsafe impl bytemuck::NoUninit for mjtTrn {}
 unsafe impl bytemuck::NoUninit for mjtDyn {}
@@ -337,7 +342,7 @@ model_layout! {
         nflex,          nflexnode,      nflexvert,      nflexedge,
         nflexelem,      nflexelemdata,  nflexstiffness, nflexbending,
         nefm0dof,       nefm0L,         nefmCvert,      nflexelemedge,
-        nflexshelldata, nflextexcoord,  nJfe,           nJfv,
+        nflexshelldata, nflextexcoord,  nJfe,           nplastic,
         nskin,          nskinvert,      nskintexvert,   nskinface,
         nskinbone,      nskinbonevert,  nmat,           npair,
         nexclude,       neq,            ntendon,        nJten,
@@ -364,7 +369,8 @@ model_layout! {
         body_jntnum,         body_jntadr,         body_dofnum,         body_dofadr,
         body_treeid,         body_geomnum,        body_geomadr,        body_plugin,
         body_bvhadr,         body_bvhnum,         jnt_type,            jnt_qposadr,
-        jnt_dofadr,          jnt_bodyid,          dof_bodyid,          dof_jntid,
+        jnt_dofadr,          jnt_bodyid,          jnt_plasticadr,      dof_bodyid,
+        dof_jntid,
         dof_parentid,        dof_treeid,          dof_Madr,            tree_bodyadr,
         tree_bodynum,        tree_dofadr,         tree_dofnum,         geom_type,
         geom_condim,         geom_bodyid,         geom_dataid,         geom_matid,
@@ -375,20 +381,21 @@ model_layout! {
         flex_nodeadr,        flex_nodenum,        flex_vertadr,        flex_vertnum,
         flex_edgeadr,        flex_edgenum,        flex_elemadr,        flex_elemnum,
         flex_elemdataadr,    flex_stiffnessadr,   flex_elemedgeadr,    flex_bendingadr,
-        flex_shellnum,       flex_shelldataadr,   flex_texcoordadr,    flex_nodebodyid,
-        flex_vertbodyid,     flex_vertedgeadr,    flex_vertedgenum,    flex_vertedge,
+        flex_plasticadr,     flex_plasticmode,    flex_shellnum,       flex_shelldataadr,
+        flex_texcoordadr,    flex_nodebodyid,     flex_vertbodyid,     flex_vertcell,
         flex_edge,           flex_edgeflap,       flex_elem,           flex_elemtexcoord,
         flex_elemedge,       flex_elemlayer,      flex_shell,          efm0_dofid,
         efm0_L_rownnz,       efm0_L_rowadr,       efm0_L_colind,       efmC_perm,
         flex_rigid,          flex_bvhadr,         flex_bvhnum,         flexedge_J_rownnz,
-        flexedge_J_rowadr,   flexedge_J_colind,   flexvert_J_rownnz,   flexvert_J_rowadr,
-        flexvert_J_colind,   skin_matid,          skin_vertadr,        skin_vertnum,
+        flexedge_J_rowadr,   flexedge_J_colind,   skin_matid,          skin_vertadr,
+        skin_vertnum,
         skin_texcoordadr,    skin_faceadr,        skin_facenum,        skin_boneadr,
         skin_bonenum,        skin_face,           skin_bonevertadr,    skin_bonevertnum,
         skin_bonebodyid,     skin_bonevertid,     mat_texid,           pair_dim,
         pair_geom1,          pair_geom2,          eq_type,             eq_obj1id,
-        eq_obj2id,           eq_objtype,          tendon_adr,          tendon_num,
-        tendon_matid,        tendon_treenum,      tendon_treeid,       ten_J_rownnz,
+        eq_obj2id,           eq_objtype,          tendon_type,         tendon_adr,
+        tendon_num,          tendon_matid,        tendon_plasticadr,   tendon_treenum,
+        tendon_treeid,       ten_J_rownnz,
         ten_J_rowadr,        ten_J_colind,        actuator_trntype,    actuator_dyntype,
         actuator_gaintype,   actuator_biastype,   actuator_ctrladr,    actuator_ctrlnum,
         actuator_ctrlspec,   actuator_outadr,     actuator_outnum,     actuator_actadr,
@@ -708,9 +715,9 @@ impl MjModel {
     }
     
     info_method! { Model, joint,
-        [r#type: 1, qposadr: 1, dofadr: 1, group: 1,
+        [r#type: 1, qposadr: 1, dofadr: 1, group: 1, plasticadr: 1,
         limited: 1, actfrclimited: 1, actgravcomp: 1, solref: mjNREF as usize, solimp: mjNIMP as usize,
-        pos: 3, axis: 3, stiffness: 1, stiffnesspoly: mjNPOLY as usize,
+        pos: 3, axis: 3, stiffness: 1, stiffnesspoly: mjNPOLY as usize, springyield: 1,
         range: 2, actfrcrange: 2, margin: 1, bodyid: 1, actuatorid: 1],
         [user: nuser_jnt],
         [qpos0: nq, qpos_spring: nq, jntid: nv,
@@ -736,7 +743,7 @@ impl MjModel {
 
     info_method! { Model, geom,
         [r#type: 1, contype: 1, conaffinity: 1, condim: 1, bodyid: 1, dataid: 1, matid: 1,
-        group: 1, priority: 1, plugin: 1, sameframe: 1, solmix: 1, solref: mjNREF as usize, solimp: mjNIMP as usize, size: 3,
+        group: 1, priority: 1, plugin: 1, sameframe: 1, castshadow: 1, solmix: 1, solref: mjNREF as usize, solimp: mjNIMP as usize, size: 3,
         aabb: 6, rbound: 1, pos: 3, quat: 4, friction: 3, margin: 1, gap: 1, surfacevel: 6, adhesion: 1, fluid: mjNFLUID as usize, rgba: 4],
         [user: nuser_geom],
         []
@@ -825,11 +832,11 @@ impl MjModel {
     }
 
     info_method! { Model, tendon,
-        [adr: 1, num: 1, matid: 1, actuatorid: 1, group: 1, treenum: 1, treeid: 2,
+        [r#type: 1, adr: 1, num: 1, matid: 1, actuatorid: 1, group: 1, plasticadr: 1, treenum: 1, treeid: 2,
         limited: 1, actfrclimited: 1, width: 1,
         solref_lim: mjNREF as usize, solimp_lim: mjNIMP as usize, solref_fri: mjNREF as usize, solimp_fri: mjNIMP as usize, range: 2, actfrcrange: 2, margin: 1,
         stiffness: 1, stiffnesspoly: mjNPOLY as usize, damping: 1, dampingpoly: mjNPOLY as usize, armature: 1,
-        frictionloss: 1, lengthspring: 2, length0: 1, invweight0: 1, J_rownnz: 1, J_rowadr: 1, rgba: 4],
+        frictionloss: 1, lengthspring: 2, springyield: 1, length0: 1, invweight0: 1, J_rownnz: 1, J_rowadr: 1, rgba: 4],
         [user: nuser_tendon],
         [J_colind: nJten]
     }
@@ -855,7 +862,7 @@ impl MjModel {
         [time: 1],
         [qpos: nq, qvel: nv,
         act: na, mpos: nmocap*3,
-        mquat: nmocap*4, ctrl: nu],
+        mquat: nmocap*4, ctrl: nu, plastic: nplastic],
         []
     }
 
@@ -1490,7 +1497,6 @@ impl MjModel {
         [ffi] nflexshelldata: MjtSize; "number of shell fragment vertex ids in all flexes.";
         [ffi] nflextexcoord: MjtSize; "number of vertices with texture coordinates.";
         [ffi] nJfe: MjtSize; "number of non-zeros in sparse flexedge Jacobian matrix.";
-        [ffi] nJfv: MjtSize; "number of non-zeros in sparse flexvert Jacobian matrix.";
         [ffi] nmesh: MjtSize; "number of meshes.";
         [ffi] nmeshvert: MjtSize; "number of vertices in all meshes.";
         [ffi] nmeshnormal: MjtSize; "number of normals in all meshes.";
@@ -1538,6 +1544,7 @@ impl MjModel {
         [ffi] nuser_sensor: MjtSize; "number of mjtNums in sensor_user.";
         [ffi] nnames: MjtSize; "number of chars in all names.";
         [ffi] npaths: MjtSize; "number of chars in all paths.";
+        [ffi] nplastic: MjtSize; "number of mjtNums in plastic state vector.";
         [ffi] nnames_map: MjtSize; "number of slots in the names hash map.";
         [ffi] nJmom: MjtSize; "number of non-zeros in sparse actuator_moment matrix.";
         [ffi] ngravcomp: MjtSize; "number of bodies with nonzero gravcomp.";
@@ -1612,6 +1619,7 @@ impl MjModel {
         (mut = unsafe) jnt_bodyid: &[i32; "id of joint's body"; ffi().njnt],
         (mut = unsafe) jnt_actuatorid: &[i32; "actuator contributing damping / armature"; ffi().njnt],
         jnt_group: &[i32; "group for visibility"; ffi().njnt],
+        (mut = unsafe) jnt_plasticadr: &[i32; "start addr in plastic state (-1: none)"; ffi().njnt],
         jnt_limited: &[MjtBool; "does joint have limits"; ffi().njnt],
         jnt_actfrclimited: &[MjtBool; "does joint have actuator force limits"; ffi().njnt],
         jnt_actgravcomp: &[MjtBool; "is gravcomp force applied via actuators"; ffi().njnt],
@@ -1621,6 +1629,7 @@ impl MjModel {
         jnt_axis: &[[MjtNum; 3] [force]; "local joint axis"; ffi().njnt],
         jnt_stiffness: &[MjtNum; "linear stiffness coefficient"; ffi().njnt],
         jnt_stiffnesspoly: &[[MjtNum; mjNPOLY as usize] [force]; "high-order stiffness coefficients"; ffi().njnt],
+        jnt_springyield: &[MjtNum; "plastic yield threshold"; ffi().njnt],
         jnt_range: &[[MjtNum; 2] [force]; "joint limits"; ffi().njnt],
         jnt_actfrcrange: &[[MjtNum; 2] [force]; "range of total actuator force"; ffi().njnt],
         jnt_margin: &[MjtNum; "min distance for limit detection"; ffi().njnt],
@@ -1655,6 +1664,7 @@ impl MjModel {
         geom_priority: &[i32; "geom contact priority"; ffi().ngeom],
         (mut = unsafe) geom_plugin: &[i32; "plugin instance id; -1: not in use"; ffi().ngeom],
         geom_sameframe: &[MjtSameFrame [force]; "same frame as body"; ffi().ngeom],
+        geom_castshadow: &[MjtBool; "does geom cast shadows"; ffi().ngeom],
         geom_solmix: &[MjtNum; "mixing coef for solref/imp in geom pair"; ffi().ngeom],
         geom_solref: &[[MjtNum; mjNREF as usize] [force]; "constraint solver reference: contact"; ffi().ngeom],
         geom_solimp: &[[MjtNum; mjNIMP as usize] [force]; "constraint solver impedance: contact"; ffi().ngeom],
@@ -1731,7 +1741,7 @@ impl MjModel {
         flex_activelayers: &[i32; "number of active element layers, 3D only"; ffi().nflex],
         flex_passive: &[i32; "passive collisions enabled"; ffi().nflex],
         (mut = unsafe) flex_dim: &[i32; "1: lines, 2: triangles, 3: tetrahedra"; ffi().nflex],
-        (mut = unsafe) flex_matid: &[i32; "material id for rendering"; ffi().nflex],
+        (mut = unsafe) flex_matid: &[i32; "material id for rendering, per element"; ffi().nflexelem],
         flex_group: &[i32; "group for visibility"; ffi().nflex],
         (mut = unsafe) flex_interp: &[i32; "interpolation (0: vertex, 1: nodes)"; ffi().nflex],
         (mut = unsafe) flex_cellnum: &[[i32; 3] [force]; "finite cell num per dimension"; ffi().nflex],
@@ -1747,14 +1757,14 @@ impl MjModel {
         (mut = unsafe) flex_stiffnessadr: &[i32; "stiffness matrix address"; ffi().nflex],
         (mut = unsafe) flex_elemedgeadr: &[i32; "first element edge id address"; ffi().nflex],
         (mut = unsafe) flex_bendingadr: &[i32; "first bending data address"; ffi().nflex],
+        (mut = unsafe) flex_plasticadr: &[i32; "plastic state address; -1: elastic"; ffi().nflex],
+        (mut = unsafe) flex_plasticmode: &[i32; "plastic state bits; 1: bend, 2: stretch"; ffi().nflex],
         (mut = unsafe) flex_shellnum: &[i32; "number of shells"; ffi().nflex],
         (mut = unsafe) flex_shelldataadr: &[i32; "first shell data address"; ffi().nflex],
         (mut = unsafe) flex_texcoordadr: &[i32; "address in flex_texcoord; -1: none"; ffi().nflex],
         (mut = unsafe) flex_nodebodyid: &[i32; "node body ids"; ffi().nflexnode],
         (mut = unsafe) flex_vertbodyid: &[i32; "vertex body ids"; ffi().nflexvert],
-        (mut = unsafe) flex_vertedgeadr: &[i32; "first edge address"; ffi().nflexvert],
-        (mut = unsafe) flex_vertedgenum: &[i32; "number of edges"; ffi().nflexvert],
-        (mut = unsafe) flex_vertedge: &[[i32; 2] [force]; "edge indices"; ffi().nflexedge],
+        (mut = unsafe) flex_vertcell: &[i32; "finite cell index for vertex; -1: none"; ffi().nflexvert],
         (mut = unsafe) flex_edge: &[[i32; 2] [force]; "edge vertex ids (2 per edge)"; ffi().nflexedge],
         (mut = unsafe) flex_edgeflap: &[[i32; 2] [force]; "adjacent vertex ids (dim=2 only)"; ffi().nflexedge],
         (mut = unsafe) flex_elem: &[i32; "element vertex ids (dim+1 per elem)"; ffi().nflexelemdata],
@@ -1764,7 +1774,6 @@ impl MjModel {
         (mut = unsafe) flex_shell: &[i32; "shell fragment vertex ids (dim per frag)"; ffi().nflexshelldata],
         flex_vert: &[[MjtNum; 3] [force]; "vertex positions in local body frames"; ffi().nflexvert],
         flex_vert0: &[[MjtNum; 3] [force]; "vertex positions in qpos0 on [0, 1]^d"; ffi().nflexvert],
-        flex_vertmetric: &[[MjtNum; 4] [force]; "inverse of reference shape matrix"; ffi().nflexvert],
         flex_node: &[[MjtNum; 3] [force]; "node positions in local body frames"; ffi().nflexnode],
         flex_node0: &[[MjtNum; 3] [force]; "Cartesian node positions in qpos0"; ffi().nflexnode],
         flexedge_length0: &[MjtNum; "edge lengths in qpos0"; ffi().nflexedge],
@@ -1780,9 +1789,10 @@ impl MjModel {
         efm0_L: &[MjtNum; "factor of M + (dt^2+dt*d)*K_bend"; ffi().nefm0L],
         (mut = unsafe) efmC_perm: &[i32; "sparse factor order: vertex dof or -1"; ffi().nefmCvert],
         flex_damping: &[MjtNum; "Rayleigh's damping coefficient"; ffi().nflex],
+        flex_yield: &[[MjtNum; 2] [force]; "yield strain (stretch, bend); 0: elastic"; ffi().nflex],
         flex_edgestiffness: &[MjtNum; "edge stiffness"; ffi().nflex],
         flex_edgedamping: &[MjtNum; "edge damping"; ffi().nflex],
-        flex_edgeequality: &[i32; "0: none, 1: edges, 2: vertices, 3: strain"; ffi().nflex],
+        flex_edgeequality: &[i32; "0: none, 1: edges, 3: strain"; ffi().nflex],
         (mut = unsafe) flex_rigid: &[MjtBool; "are all vertices in the same body"; ffi().nflex],
         flexedge_rigid: &[MjtBool; "are both edge vertices in same body"; ffi().nflexedge],
         (mut = unsafe) flex_centered: &[MjtBool; "are all vertex coordinates (0,0,0)"; ffi().nflex],
@@ -1792,9 +1802,6 @@ impl MjModel {
         (mut = unsafe) flexedge_J_rownnz: &[i32; "number of non-zeros in Jacobian row"; ffi().nflexedge],
         (mut = unsafe) flexedge_J_rowadr: &[i32; "row start address in colind array"; ffi().nflexedge],
         (mut = unsafe) flexedge_J_colind: &[i32; "column indices in sparse Jacobian"; ffi().nJfe],
-        (mut = unsafe) flexvert_J_rownnz: &[[i32; 2] [force]; "number of non-zeros in Jacobian row"; ffi().nflexvert],
-        (mut = unsafe) flexvert_J_rowadr: &[[i32; 2] [force]; "row start address in colind array"; ffi().nflexvert],
-        (mut = unsafe) flexvert_J_colind: &[[i32; 2] [force]; "column indices in sparse Jacobian"; ffi().nJfv],
         flex_rgba: &[[f32; 4] [force]; "rgba when material is omitted"; ffi().nflex],
         flex_texcoord: &[[f32; 2] [force]; "vertex texture coordinates"; ffi().nflextexcoord],
         (mut = unsafe) mesh_vertadr: &[i32; "first vertex address"; ffi().nmesh],
@@ -1898,11 +1905,13 @@ impl MjModel {
         eq_solref: &[[MjtNum; mjNREF as usize] [force]; "constraint solver reference"; ffi().neq],
         eq_solimp: &[[MjtNum; mjNIMP as usize] [force]; "constraint solver impedance"; ffi().neq],
         (mut = unsafe) eq_data: &[[MjtNum; mjNEQDATA as usize] [force]; "numeric data for constraint"; ffi().neq],
+        (mut = unsafe) tendon_type: &[MjtTendon [force]; "type of tendon"; ffi().ntendon],
         (mut = unsafe) tendon_adr: &[i32; "address of first object in tendon's path"; ffi().ntendon],
         (mut = unsafe) tendon_num: &[i32; "number of objects in tendon's path"; ffi().ntendon],
         (mut = unsafe) tendon_matid: &[i32; "material id for rendering"; ffi().ntendon],
         (mut = unsafe) tendon_actuatorid: &[i32; "actuator contributing damping / armature"; ffi().ntendon],
         tendon_group: &[i32; "group for visibility"; ffi().ntendon],
+        (mut = unsafe) tendon_plasticadr: &[i32; "start addr in plastic state (-1: none)"; ffi().ntendon],
         (mut = unsafe) tendon_treenum: &[i32; "number of trees along tendon's path"; ffi().ntendon],
         (mut = unsafe) tendon_treeid: &[[i32; 2] [force]; "first two trees along tendon's path"; ffi().ntendon],
         (mut = unsafe) ten_J_rownnz: &[i32; "number of non-zeros in Jacobian row"; ffi().ntendon],
@@ -1925,6 +1934,7 @@ impl MjModel {
         tendon_armature: &[MjtNum; "inertia associated with tendon velocity"; ffi().ntendon],
         tendon_frictionloss: &[MjtNum; "loss due to friction"; ffi().ntendon],
         tendon_lengthspring: &[[MjtNum; 2] [force]; "spring resting length range"; ffi().ntendon],
+        tendon_springyield: &[MjtNum; "plastic yield threshold"; ffi().ntendon],
         tendon_length0: &[MjtNum; "tendon length in qpos0"; ffi().ntendon],
         tendon_invweight0: &[MjtNum; "inv. weight in qpos0"; ffi().ntendon],
         tendon_rgba: &[[f32; 4] [force]; "rgba when material is omitted"; ffi().ntendon],
@@ -2049,6 +2059,7 @@ impl MjModel {
             key_mpos: &[[MjtNum; ffi().nmocap * 3] [force]; "key mocap position"; ffi().nkey],
             key_mquat: &[[MjtNum; ffi().nmocap * 4] [force]; "key mocap quaternion"; ffi().nkey],
             key_ctrl: &[[MjtNum; ffi().nu] [force]; "key control"; ffi().nkey],
+            key_plastic: &[[MjtNum; ffi().nplastic] [force]; "key plastic state"; ffi().nkey],
 
             sensor_user: &[[MjtNum; ffi().nuser_sensor] [force]; "user data"; ffi().nsensor],
             actuator_user: &[[MjtNum; ffi().nuser_actuator] [force]; "user data"; ffi().nactuator],
@@ -2162,7 +2173,7 @@ info_with_view!(Model, geom,
 	[[geom_] contype: i32,
 	 [geom_] conaffinity: i32,
 	 [geom_] group: i32,
-	 [geom_] priority: i32, [geom_] sameframe: MjtSameFrame [force],
+	 [geom_] priority: i32, [geom_] sameframe: MjtSameFrame [force], [geom_] castshadow: MjtBool,
 	 [geom_] solmix: MjtNum, [geom_] solref: MjtNum,
 	 [geom_] solimp: MjtNum, [geom_] size: MjtNum,
 	 [geom_] aabb: MjtNum,
@@ -2192,7 +2203,7 @@ info_with_view!(Model, joint,
 	 [jnt_] solref: MjtNum, [jnt_] solimp: MjtNum,
 	 [jnt_] pos: MjtNum,
      [jnt_] axis: MjtNum, [jnt_] stiffness: MjtNum,
-     [jnt_] stiffnesspoly: MjtNum,
+     [jnt_] stiffnesspoly: MjtNum, [jnt_] springyield: MjtNum,
      [jnt_] range: MjtNum, [jnt_] actfrcrange: MjtNum, [jnt_] margin: MjtNum,
      [jnt_] user: MjtNum,
      [dof_] frictionloss: MjtNum, [dof_] armature: MjtNum,
@@ -2203,7 +2214,7 @@ info_with_view!(Model, joint,
      [dof_] simplenum: i32],
 	[[jnt_] r#type: MjtJoint [force],
      [jnt_] qposadr: i32,
-     [jnt_] dofadr: i32, [jnt_] bodyid: i32, [jnt_] actuatorid: i32,
+     [jnt_] dofadr: i32, [jnt_] bodyid: i32, [jnt_] actuatorid: i32, [jnt_] plasticadr: i32,
      dof_bodyid: i32, [dof_] jntid: i32,
      [dof_] parentid: i32, dof_treeid: i32,
      [dof_] Madr: i32],
@@ -2351,10 +2362,11 @@ info_with_view!(Model, tendon,
 	 [tendon_] damping: MjtNum,
 	 [tendon_] dampingpoly: MjtNum,
 	 [tendon_] armature: MjtNum,
-	 [tendon_] frictionloss: MjtNum, [tendon_] lengthspring: MjtNum,
+	 [tendon_] frictionloss: MjtNum, [tendon_] lengthspring: MjtNum, [tendon_] springyield: MjtNum,
 	 [tendon_] length0: MjtNum, [tendon_] invweight0: MjtNum,
 	 [tendon_] user: MjtNum, [tendon_] rgba: f32],
-	[[tendon_] matid: i32, [tendon_] actuatorid: i32, [tendon_] treenum: i32, [tendon_] treeid: i32,
+	[[tendon_] r#type: MjtTendon [force], [tendon_] matid: i32, [tendon_] actuatorid: i32,
+	 [tendon_] plasticadr: i32, [tendon_] treenum: i32, [tendon_] treeid: i32,
 	 [tendon_] adr: i32, [tendon_] num: i32,
      [ten_] J_rownnz: i32, [ten_] J_rowadr: i32, [ten_] J_colind: i32],
 	[]);
@@ -2385,7 +2397,8 @@ info_with_view!(Model, key,
 	 [key_] act: MjtNum,
 	 [key_] mpos: MjtNum,
 	 [key_] mquat: MjtNum,
-	 [key_] ctrl: MjtNum],
+	 [key_] ctrl: MjtNum,
+	 [key_] plastic: MjtNum],
 	[],
 	[]);
 
@@ -4590,5 +4603,69 @@ mod tests {
         assert_ne!(model.tex_pathadr()[0], -1);
 
         std::fs::remove_file(PNG_PATH).unwrap();
+    }
+
+    /// A joint and a tendon with a yield threshold own plastic state, which a keyframe holds too;
+    /// an elastic joint or tendon owns none. The tendon type tells a fixed tendon from a spatial one,
+    /// and a geom keeps its shadow flag.
+    #[test]
+    fn test_plastic_state_tendon_type_and_castshadow() {
+        const PLASTIC_MODEL: &str = "\
+<mujoco>
+  <compiler angle=\"radian\"/>
+  <worldbody>
+    <body name=\"upper\">
+      <joint name=\"plastic\" type=\"hinge\" stiffness=\"10\" springyield=\"0.1\"/>
+      <geom size=\"0.1\" castshadow=\"false\"/>
+      <site name=\"top\"/>
+      <body name=\"lower\" pos=\"0 0 -0.3\">
+        <joint name=\"elastic\" type=\"hinge\" stiffness=\"10\"/>
+        <geom size=\"0.1\"/>
+        <site name=\"bottom\"/>
+      </body>
+    </body>
+  </worldbody>
+  <tendon>
+    <fixed name=\"fixed\" stiffness=\"5\" springyield=\"0.2\"><joint joint=\"plastic\" coef=\"1\"/></fixed>
+    <spatial name=\"spatial\"><site site=\"top\"/><site site=\"bottom\"/></spatial>
+  </tendon>
+  <keyframe><key name=\"rest\"/></keyframe>
+</mujoco>";
+        let model = MjModel::from_xml_string(PLASTIC_MODEL).unwrap();
+
+        // The hinge holds one entry and the fixed tendon its two spring lengths.
+        assert_eq!(model.nplastic(), 3);
+        let plastic = model.joint("plastic").unwrap().view(&model);
+        assert_eq!((plastic.plasticadr[0], plastic.springyield[0]), (0, 0.1));
+        let elastic = model.joint("elastic").unwrap().view(&model);
+        assert_eq!((elastic.plasticadr[0], elastic.springyield[0]), (-1, 0.0));
+
+        let fixed = model.tendon("fixed").unwrap().view(&model);
+        assert_eq!(fixed.r#type[0], MjtTendon::mjTENDON_FIXED);
+        assert_eq!((fixed.plasticadr[0], fixed.springyield[0]), (1, 0.2));
+        let spatial = model.tendon("spatial").unwrap().view(&model);
+        assert_eq!(spatial.r#type[0], MjtTendon::mjTENDON_SPATIAL);
+        assert_eq!(spatial.plasticadr[0], -1);
+        assert_eq!(model.tendon_type(), [MjtTendon::mjTENDON_FIXED, MjtTendon::mjTENDON_SPATIAL]);
+
+        assert_eq!(model.key("rest").unwrap().view(&model).plastic.len(), 3);
+        assert_eq!(model.key_plastic().len(), 3);
+        assert_eq!(model.geom_castshadow(), [false, true]);
+    }
+
+    /// A flex holds one material id per element.
+    #[test]
+    fn test_flex_matid_per_element() {
+        const FLEX_MODEL: &str = "\
+<mujoco>
+  <asset><material name=\"cloth\"/></asset>
+  <worldbody>
+    <flexcomp name=\"sheet\" type=\"grid\" count=\"3 3 1\" spacing=\".1 .1 .1\" dim=\"2\" material=\"cloth\"/>
+  </worldbody>
+</mujoco>";
+        let model = MjModel::from_xml_string(FLEX_MODEL).unwrap();
+        let cloth = model.name_to_id(MjtObjBase::mjOBJ_MATERIAL, "cloth").unwrap() as i32;
+        assert_eq!(model.flex_matid().len(), model.nflexelem() as usize);
+        assert!(model.flex_matid().iter().all(|&matid| matid == cloth));
     }
 }

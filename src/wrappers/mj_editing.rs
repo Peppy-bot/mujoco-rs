@@ -1168,6 +1168,7 @@ impl<Capability> MjsJoint<Capability> {
         [ffi, ffi_mut] type_ + _: MjtJoint;           "joint type.";
         [ffi, ffi_mut] group: i32;                    "joint group.";
         [ffi, ffi_mut] springref: f64;               "spring reference value: qpos_spring.";
+        [ffi, ffi_mut] springyield: f64;             "plastic yield threshold (0: elastic).";
         [ffi, ffi_mut] margin: f64;                  "margin value for joint limit detection.";
         [ffi, ffi_mut] armature: f64;                "armature inertia (mass for slider).";
         [ffi, ffi_mut] frictionloss: f64;            "friction loss.";
@@ -1230,6 +1231,12 @@ impl<Capability> MjsGeom<Capability> {
         [ffi, ffi_mut] fluid_ellipsoid: MjtNum;       "whether ellipsoid-fluid model is active.";
         [ffi, ffi_mut] fitscale: f64;                 "scale mesh uniformly.";
     ]);
+
+    getter_setter! {
+        [&] with, get, set, [
+            [ffi, ffi_mut] castshadow: bool;   "whether the geom casts shadows."
+        ]
+    }
 
     userdata_method!(f64);
 
@@ -1843,6 +1850,7 @@ impl<Capability> MjsFlex<Capability> {
             [ffi, ffi_mut] solimp: &[MjtNum; mjNIMP as usize];             "solver impedance.";
             [ffi, ffi_mut] size: &[f64; 3];                                "vertex bounding box half sizes in qpos0.";
             [ffi, ffi_mut] sectionsize: &[f64; 2];                         "1D box cross-section half-sizes.";
+            [ffi, ffi_mut] stressyield: &[f64; 2];                         "yield strain thresholds (stretch, bend); 0: elastic.";
             [ffi, ffi_mut] cellcount: &[i32; 3];                           "grid cell count for finite cell method.";
         ]
     }
@@ -1865,6 +1873,7 @@ impl<Capability> MjsFlex<Capability> {
             [ffi, ffi_mut] edgestiffness: f64;      "edge stiffness.";
             [ffi, ffi_mut] edgedamping: f64;        "edge damping.";
             [ffi, ffi_mut] poisson: f64;            "Poisson's ratio.";
+            [ffi, ffi_mut] shear: f64;              "1D torsion shear modulus; 0: young / (2 (1 + poisson)).";
             [ffi, ffi_mut] damping: f64;            "Rayleigh's damping.";
             [ffi, ffi_mut] thickness: f64;          "thickness (2D only).";
             [ffi, ffi_mut] elastic2d: i32;          "2D passive forces; 0: none, 1: bending, 2: stretching, 3: both.";
@@ -1887,11 +1896,8 @@ impl<Capability> MjsFlex<Capability> {
         ]
     }
 
-    string_set_get_with! {[&]
-        material; "name of material used for rendering.";
-    }
-
     vec_string_set_append! {
+        material; "names of the materials used for rendering: one name that every element uses, or one name per element.";
         nodebody; "node body names.";
         vertbody; "vertex body names.";
     }
@@ -2004,6 +2010,7 @@ impl<Capability> MjsTendon<Capability> {
     getter_setter! {[&] with, get, set, [
         [ffi, ffi_mut] group: i32;         "group.";
         [ffi, ffi_mut] frictionloss: f64;  "friction loss.";
+        [ffi, ffi_mut] springyield: f64;   "plastic yield threshold (0: elastic).";
         [ffi, ffi_mut] armature: f64;      "inertia associated with tendon velocity.";
         [ffi, ffi_mut] margin: f64;        "margin value for tendon limit detection.";
         [ffi, ffi_mut] width: f64;         "width for rendering.";
@@ -2290,6 +2297,7 @@ impl MjsKey {
         mpos: f64; "mocap pos.";
         mquat: f64; "mocap quat.";
         ctrl: f64; "ctrl.";
+        plastic: f64; "plastic state.";
     }
 }
 
@@ -2760,7 +2768,7 @@ pub struct MjFlexcompConfig<'a> {
     /// Equivalent-inertia box size used to set each body's rotational inertia. A value of 0 keeps
     /// MuJoCo's default.
     pub inertiabox: f64,
-    /// Edge equality constraint: 0 none, 1 edge, 2 vertex, 3 strain.
+    /// Edge equality constraint: 0 none, 1 edge, 3 strain.
     pub equality: u8,
     /// Whether all points are vertices in the parent body (no new bodies created).
     pub rigid: bool,
@@ -2823,7 +2831,7 @@ impl<'a> MjFlexcompConfig<'a> {
             radius: f64;          "the radius of the flex elements.";
             mass: f64;            "the total mass, divided evenly over the generated points.";
             inertiabox: f64;      "the equivalent-inertia box size used to set each body's rotational inertia.";
-            equality: u8;         "the edge equality constraint: 0 none, 1 edge, 2 vertex, 3 strain.";
+            equality: u8;         "the edge equality constraint: 0 none, 1 edge, 3 strain.";
             rigid: bool;          "whether all points are vertices in the parent body (no new bodies created).";
             flatskin: bool;       "render flex skin with flat shading.";
             elastic2d: u8;        "the 2D passive force mode: 0 none, 1 bending, 2 stretching, 3 both.";
@@ -3156,7 +3164,7 @@ mod tests {
     #[test]
     fn test_activate_plugin() {
         use crate::wrappers::mj_plugin::load_all_plugin_libraries;
-        const PLUGIN: &str = "mujoco.elasticity.cable";
+        const PLUGIN: &str = "mujoco.pid";
 
         let mut spec = MjSpec::new();
         assert_eq!(spec.activate_plugin("not.a.plugin"), Err(MjEditError::NotFound));
@@ -5137,5 +5145,37 @@ mod tests {
         assert_eq!(spec.dedup_assets().unwrap(), 1, "one asset (second texture) should be deduped.");
         assert_eq!(spec.texture_iter().count(), 1, "only one texture should exist after deduplication.");
         assert_eq!(spec.texture_iter().next().unwrap().name(), "name 1", "the first texture's name must be used");
+    }
+
+    /// The 4.0 spec fields reach the compiled model: the yield thresholds of joints, tendons and
+    /// flexes, the torsion shear modulus, the shadow flag of a geom, and one material per element of
+    /// a flex.
+    #[test]
+    fn test_plasticity_shadow_and_flex_materials() {
+        let mut spec = MjSpec::new();
+        spec.add_material().with_name("red");
+        spec.add_material().with_name("blue");
+        let world = spec.world_body_mut();
+        let body = world.add_body().with_name("arm");
+        body.add_joint().with_name("hinge").with_type(MjtJoint::mjJNT_HINGE).with_springyield(0.3);
+        let geom = body.add_geom().with_size([0.1, 0.0, 0.0]).with_castshadow(false);
+        assert!(!geom.castshadow());
+        world.add_flexcomp("strip", &MjFlexcompConfig {
+            r#type: Some("grid"), dim: 2, count: Some([3, 2, 1]), spacing: Some([0.1, 0.1, 0.1]),
+            ..Default::default()
+        });
+        let flex = spec.flex_mut("strip").unwrap();
+        flex.set_material("red blue red blue");
+        flex.with_shear(2.0e3).with_stressyield([0.01, 0.02]);
+        assert_eq!(flex.shear(), 2.0e3);
+
+        let model = spec.compile().unwrap();
+        let (red, blue) = (model.name_to_id(MjtObjBase::mjOBJ_MATERIAL, "red").unwrap() as i32,
+                           model.name_to_id(MjtObjBase::mjOBJ_MATERIAL, "blue").unwrap() as i32);
+        assert_eq!(model.flex_matid(), [red, blue, red, blue]);
+        assert_eq!(model.flex_yield(), [[0.01, 0.02]]);
+        // The compiler reads the hinge's threshold in degrees, its default angle unit.
+        crate::assert_relative_eq!(model.joint("hinge").unwrap().view(&model).springyield[0], 0.3_f64.to_radians(), epsilon = 1e-15);
+        assert_eq!(model.geom_castshadow(), [false]);
     }
 }

@@ -43,7 +43,7 @@ impl<T> ::std::cmp::PartialEq for __BindgenUnionField<T> {
     }
 }
 impl<T> ::std::cmp::Eq for __BindgenUnionField<T> {}
-pub const mjVERSION_HEADER: u32 = 3017000;
+pub const mjVERSION_HEADER: u32 = 4000000;
 pub const mjMINVAL: f64 = 0.000000000000001;
 pub const mjMAXVAL: f64 = 10000000000.0;
 pub const mjPI: f64 = 3.141592653589793;
@@ -143,6 +143,9 @@ pub enum mjtDisableBit {
     mjDSBL_MULTICCD = 524288,
     mjNDISABLE = 20,
 }
+impl mjtEnableBit {
+    pub const mjNENABLE: mjtEnableBit = mjtEnableBit::mjENBL_INVDISCRETE;
+}
 #[repr(u32)]
 #[derive(Debug, Clone, Hash, PartialEq, Eq,  Copy)]
 pub enum mjtEnableBit {
@@ -153,7 +156,7 @@ pub enum mjtEnableBit {
     mjENBL_SLEEP = 16,
     mjENBL_DIAGEXACT = 32,
     mjENBL_IPC = 64,
-    mjNENABLE = 7,
+    mjENBL_SPECULATIVE = 128,
 }
 #[repr(u32)]
 #[derive(Debug, Clone, Hash, PartialEq, Eq,  Copy)]
@@ -279,6 +282,12 @@ pub enum mjtEq {
     mjEQ_FLEXVERT = 5,
     mjEQ_FLEXSTRAIN = 6,
     mjEQ_DISTANCE = 7,
+}
+#[repr(u32)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq,  Copy)]
+pub enum mjtTendon {
+    mjTENDON_FIXED = 0,
+    mjTENDON_SPATIAL = 1,
 }
 #[repr(u32)]
 #[derive(Debug, Clone, Hash, PartialEq, Eq,  Copy)]
@@ -550,11 +559,12 @@ pub enum mjtState {
     mjSTATE_MOCAP_QUAT = 2048,
     mjSTATE_USERDATA = 4096,
     mjSTATE_PLUGIN = 8192,
-    mjNSTATE = 14,
-    mjSTATE_PHYSICS = 30,
-    mjSTATE_FULLPHYSICS = 8223,
+    mjSTATE_PLASTIC = 16384,
+    mjNSTATE = 15,
+    mjSTATE_PHYSICS = 16414,
+    mjSTATE_FULLPHYSICS = 24607,
     mjSTATE_USER = 8128,
-    mjSTATE_INTEGRATION = 16383,
+    mjSTATE_INTEGRATION = 32767,
 }
 #[repr(u32)]
 #[derive(Debug, Clone, Hash, PartialEq, Eq,  Copy)]
@@ -889,7 +899,6 @@ pub struct mjModel_ {
     pub nflexshelldata: mjtSize,
     pub nflextexcoord: mjtSize,
     pub nJfe: mjtSize,
-    pub nJfv: mjtSize,
     pub nmesh: mjtSize,
     pub nmeshvert: mjtSize,
     pub nmeshnormal: mjtSize,
@@ -937,6 +946,7 @@ pub struct mjModel_ {
     pub nuser_sensor: mjtSize,
     pub nnames: mjtSize,
     pub npaths: mjtSize,
+    pub nplastic: mjtSize,
     pub nnames_map: mjtSize,
     pub nJmom: mjtSize,
     pub ngravcomp: mjtSize,
@@ -1003,6 +1013,7 @@ pub struct mjModel_ {
     pub jnt_bodyid: *mut ::std::os::raw::c_int,
     pub jnt_actuatorid: *mut ::std::os::raw::c_int,
     pub jnt_group: *mut ::std::os::raw::c_int,
+    pub jnt_plasticadr: *mut ::std::os::raw::c_int,
     pub jnt_limited: *mut mjtBool,
     pub jnt_actfrclimited: *mut mjtBool,
     pub jnt_actgravcomp: *mut mjtBool,
@@ -1012,6 +1023,7 @@ pub struct mjModel_ {
     pub jnt_axis: *mut mjtNum,
     pub jnt_stiffness: *mut mjtNum,
     pub jnt_stiffnesspoly: *mut mjtNum,
+    pub jnt_springyield: *mut mjtNum,
     pub jnt_range: *mut mjtNum,
     pub jnt_actfrcrange: *mut mjtNum,
     pub jnt_margin: *mut mjtNum,
@@ -1047,6 +1059,7 @@ pub struct mjModel_ {
     pub geom_priority: *mut ::std::os::raw::c_int,
     pub geom_plugin: *mut ::std::os::raw::c_int,
     pub geom_sameframe: *mut mjtByte,
+    pub geom_castshadow: *mut mjtBool,
     pub geom_solmix: *mut mjtNum,
     pub geom_solref: *mut mjtNum,
     pub geom_solimp: *mut mjtNum,
@@ -1142,14 +1155,14 @@ pub struct mjModel_ {
     pub flex_stiffnessadr: *mut ::std::os::raw::c_int,
     pub flex_elemedgeadr: *mut ::std::os::raw::c_int,
     pub flex_bendingadr: *mut ::std::os::raw::c_int,
+    pub flex_plasticadr: *mut ::std::os::raw::c_int,
+    pub flex_plasticmode: *mut ::std::os::raw::c_int,
     pub flex_shellnum: *mut ::std::os::raw::c_int,
     pub flex_shelldataadr: *mut ::std::os::raw::c_int,
     pub flex_texcoordadr: *mut ::std::os::raw::c_int,
     pub flex_nodebodyid: *mut ::std::os::raw::c_int,
     pub flex_vertbodyid: *mut ::std::os::raw::c_int,
-    pub flex_vertedgeadr: *mut ::std::os::raw::c_int,
-    pub flex_vertedgenum: *mut ::std::os::raw::c_int,
-    pub flex_vertedge: *mut ::std::os::raw::c_int,
+    pub flex_vertcell: *mut ::std::os::raw::c_int,
     pub flex_edge: *mut ::std::os::raw::c_int,
     pub flex_edgeflap: *mut ::std::os::raw::c_int,
     pub flex_elem: *mut ::std::os::raw::c_int,
@@ -1159,7 +1172,6 @@ pub struct mjModel_ {
     pub flex_shell: *mut ::std::os::raw::c_int,
     pub flex_vert: *mut mjtNum,
     pub flex_vert0: *mut mjtNum,
-    pub flex_vertmetric: *mut mjtNum,
     pub flex_node: *mut mjtNum,
     pub flex_node0: *mut mjtNum,
     pub flexedge_length0: *mut mjtNum,
@@ -1175,6 +1187,7 @@ pub struct mjModel_ {
     pub efm0_L: *mut mjtNum,
     pub efmC_perm: *mut ::std::os::raw::c_int,
     pub flex_damping: *mut mjtNum,
+    pub flex_yield: *mut mjtNum,
     pub flex_edgestiffness: *mut mjtNum,
     pub flex_edgedamping: *mut mjtNum,
     pub flex_edgeequality: *mut ::std::os::raw::c_int,
@@ -1187,9 +1200,6 @@ pub struct mjModel_ {
     pub flexedge_J_rownnz: *mut ::std::os::raw::c_int,
     pub flexedge_J_rowadr: *mut ::std::os::raw::c_int,
     pub flexedge_J_colind: *mut ::std::os::raw::c_int,
-    pub flexvert_J_rownnz: *mut ::std::os::raw::c_int,
-    pub flexvert_J_rowadr: *mut ::std::os::raw::c_int,
-    pub flexvert_J_colind: *mut ::std::os::raw::c_int,
     pub flex_rgba: *mut f32,
     pub flex_texcoord: *mut f32,
     pub mesh_vertadr: *mut ::std::os::raw::c_int,
@@ -1293,11 +1303,13 @@ pub struct mjModel_ {
     pub eq_solref: *mut mjtNum,
     pub eq_solimp: *mut mjtNum,
     pub eq_data: *mut mjtNum,
+    pub tendon_type: *mut ::std::os::raw::c_int,
     pub tendon_adr: *mut ::std::os::raw::c_int,
     pub tendon_num: *mut ::std::os::raw::c_int,
     pub tendon_matid: *mut ::std::os::raw::c_int,
     pub tendon_actuatorid: *mut ::std::os::raw::c_int,
     pub tendon_group: *mut ::std::os::raw::c_int,
+    pub tendon_plasticadr: *mut ::std::os::raw::c_int,
     pub tendon_treenum: *mut ::std::os::raw::c_int,
     pub tendon_treeid: *mut ::std::os::raw::c_int,
     pub ten_J_rownnz: *mut ::std::os::raw::c_int,
@@ -1320,6 +1332,7 @@ pub struct mjModel_ {
     pub tendon_armature: *mut mjtNum,
     pub tendon_frictionloss: *mut mjtNum,
     pub tendon_lengthspring: *mut mjtNum,
+    pub tendon_springyield: *mut mjtNum,
     pub tendon_length0: *mut mjtNum,
     pub tendon_invweight0: *mut mjtNum,
     pub tendon_user: *mut mjtNum,
@@ -1404,6 +1417,7 @@ pub struct mjModel_ {
     pub key_mpos: *mut mjtNum,
     pub key_mquat: *mut mjtNum,
     pub key_ctrl: *mut mjtNum,
+    pub key_plastic: *mut mjtNum,
     pub name_bodyadr: *mut ::std::os::raw::c_int,
     pub name_jntadr: *mut ::std::os::raw::c_int,
     pub name_geomadr: *mut ::std::os::raw::c_int,
@@ -1467,6 +1481,7 @@ pub struct mjContact_ {
     pub solreffriction: [mjtNum; 2usize],
     pub solimp: [mjtNum; 5usize],
     pub adhesion: mjtNum,
+    pub surfacevel: [mjtNum; 3usize],
     pub mu: mjtNum,
     pub H: [mjtNum; 36usize],
     pub dim: ::std::os::raw::c_int,
@@ -1560,6 +1575,7 @@ pub struct mjData_ {
     pub qvel: *mut mjtNum,
     pub act: *mut mjtNum,
     pub history: *mut mjtNum,
+    pub plastic: *mut mjtNum,
     pub qacc_warmstart: *mut mjtNum,
     pub plugin_state: *mut mjtNum,
     pub ctrl: *mut mjtNum,
@@ -1579,12 +1595,15 @@ pub struct mjData_ {
     pub xquat: *mut mjtNum,
     pub xmat: *mut mjtNum,
     pub xipos: *mut mjtNum,
+    pub xiquat: *mut mjtNum,
     pub ximat: *mut mjtNum,
     pub xanchor: *mut mjtNum,
     pub xaxis: *mut mjtNum,
     pub geom_xpos: *mut mjtNum,
+    pub geom_xquat: *mut mjtNum,
     pub geom_xmat: *mut mjtNum,
     pub site_xpos: *mut mjtNum,
+    pub site_xquat: *mut mjtNum,
     pub site_xmat: *mut mjtNum,
     pub cam_xpos: *mut mjtNum,
     pub cam_xmat: *mut mjtNum,
@@ -1601,8 +1620,6 @@ pub struct mjData_ {
     pub flexedge_hessian: *mut mjtNum,
     pub flexedge_J: *mut mjtNum,
     pub flexedge_length: *mut mjtNum,
-    pub flexvert_J: *mut mjtNum,
-    pub flexvert_length: *mut mjtNum,
     pub bvh_aabb_dyn: *mut mjtNum,
     pub flexvert_lambda: *mut mjtNum,
     pub flexvert_conage: *mut ::std::os::raw::c_int,
@@ -2061,6 +2078,7 @@ pub struct mjsJoint_ {
     pub(crate) align: mjtAlignFree,
     pub(crate) stiffness: [f64; 3usize],
     pub(crate) springref: f64,
+    pub(crate) springyield: f64,
     pub(crate) springdamper: [f64; 2usize],
     pub(crate) limited: mjtLimited,
     pub(crate) range: [f64; 2usize],
@@ -2110,6 +2128,7 @@ pub struct mjsGeom_ {
     pub(crate) material: *mut mjString,
     pub(crate) rgba: [f32; 4usize],
     pub(crate) group: ::std::os::raw::c_int,
+    pub(crate) castshadow: mjtBool,
     pub(crate) hfieldname: *mut mjString,
     pub(crate) meshname: *mut mjString,
     pub(crate) fitscale: f64,
@@ -2210,11 +2229,13 @@ pub struct mjsFlex_ {
     pub(crate) edgestiffness: f64,
     pub(crate) edgedamping: f64,
     pub(crate) rgba: [f32; 4usize],
-    pub(crate) material: *mut mjString,
+    pub(crate) material: *mut mjStringVec,
     pub(crate) young: f64,
     pub(crate) poisson: f64,
+    pub(crate) shear: f64,
     pub(crate) damping: f64,
     pub(crate) thickness: f64,
+    pub(crate) stressyield: [f64; 2usize],
     pub(crate) elastic2d: ::std::os::raw::c_int,
     pub(crate) elastic3d: ::std::os::raw::c_int,
     pub(crate) section: mjtFlexSection,
@@ -2382,6 +2403,7 @@ pub struct mjsTendon_ {
     pub(crate) element: *mut mjsElement,
     pub(crate) stiffness: [f64; 3usize],
     pub(crate) springlength: [f64; 2usize],
+    pub(crate) springyield: f64,
     pub(crate) damping: [f64; 3usize],
     pub(crate) frictionloss: f64,
     pub(crate) solref_friction: [mjtNum; 2usize],
@@ -2513,6 +2535,7 @@ pub struct mjsKey_ {
     pub(crate) mpos: *mut mjDoubleVec,
     pub(crate) mquat: *mut mjDoubleVec,
     pub(crate) ctrl: *mut mjDoubleVec,
+    pub(crate) plastic: *mut mjDoubleVec,
     pub(crate) info: *mut mjString,
 }
 pub type mjsKey = mjsKey_;
@@ -2663,7 +2686,8 @@ pub enum mjtRndFlag_ {
     mjRND_SEGMENT = 8,
     mjRND_IDCOLOR = 9,
     mjRND_CULL_FACE = 10,
-    mjNRNDFLAG = 11,
+    mjRND_POST_PROCESSING = 11,
+    mjNRNDFLAG = 12,
 }
 pub use self::mjtRndFlag_ as mjtRndFlag;
 #[repr(u32)]
@@ -2740,6 +2764,7 @@ pub struct mjvGeom_ {
     pub shininess: f32,
     pub reflectance: f32,
     pub texrepeat: [f32; 2usize],
+    pub castshadow: mjtByte,
     pub label: [::std::os::raw::c_char; 100usize],
     pub camdist: f32,
     pub modelrbound: f32,
@@ -2823,7 +2848,7 @@ pub struct mjvScene_ {
     pub rotate: [f32; 4usize],
     pub scale: f32,
     pub stereo: ::std::os::raw::c_int,
-    pub flags: [mjtByte; 11usize],
+    pub flags: [mjtByte; 12usize],
     pub framewidth: ::std::os::raw::c_int,
     pub framergb: [f32; 3usize],
     pub status: ::std::os::raw::c_int,
@@ -3550,7 +3575,7 @@ unsafe extern "C" {
     pub static mut mjDISABLESTRING: [*const ::std::os::raw::c_char; 20usize];
 }
 unsafe extern "C" {
-    pub static mut mjENABLESTRING: [*const ::std::os::raw::c_char; 7usize];
+    pub static mut mjENABLESTRING: [*const ::std::os::raw::c_char; 8usize];
 }
 unsafe extern "C" {
     pub static mut mjTIMERSTRING: [*const ::std::os::raw::c_char; 15usize];
@@ -3565,7 +3590,7 @@ unsafe extern "C" {
     pub static mut mjVISSTRING: [[*const ::std::os::raw::c_char; 3usize]; 31usize];
 }
 unsafe extern "C" {
-    pub static mut mjRNDSTRING: [[*const ::std::os::raw::c_char; 3usize]; 11usize];
+    pub static mut mjRNDSTRING: [[*const ::std::os::raw::c_char; 3usize]; 12usize];
 }
 unsafe extern "C" {
     pub static mut mjTOPICSTRING: [*const ::std::os::raw::c_char; 3usize];
