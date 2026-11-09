@@ -3,8 +3,8 @@ MuJoCo-rs
 =======================
 
 
-.. image:: https://img.shields.io/docsrs/mujoco-rs/7.0.0
-    :target: https://docs.rs/mujoco-rs/7.0.0/mujoco_rs/
+.. image:: https://img.shields.io/docsrs/mujoco-rs/8.0.0
+    :target: https://docs.rs/mujoco-rs/8.0.0/mujoco_rs/
 
 
 .. image:: https://img.shields.io/crates/v/mujoco-rs.svg
