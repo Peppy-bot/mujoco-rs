@@ -4088,10 +4088,11 @@ mod tests {
         tuple.set_objtype(&[MjtObjBase::mjOBJ_BODY, MjtObjBase::mjOBJ_BODY]);
 
         assert_eq!(tuple.objprm(), &obj_param);
+        assert_eq!(tuple.objname().collect::<Vec<_>>(), ["body1", "body2"]);
 
         spec.compile().unwrap();
 
-        // Verify via XML as objname has no spec getter
+        // The saved XML carries the object names and parameters.
         let xml = spec.save_xml_string(2000).unwrap();
         assert!(xml.contains("objname=\"body1\""));
         assert!(xml.contains("objname=\"body2\""));
@@ -4529,6 +4530,44 @@ mod tests {
         let err = spec.compile().unwrap_err();
         assert!(matches!(&err, MjEditError::CompileFailed(msg) if msg.contains("missing_back.png")),
             "compile must fail on the last cube face file, got {err:?}");
+    }
+
+    /// The getters of the string vectors read back, entry by entry, what the setters wrote. A
+    /// pre-sized vector keeps one entry per role or face, and the entries not set are empty.
+    #[test]
+    fn test_string_vector_getters() {
+        let mut spec = MjSpec::new();
+
+        let flex = spec.add_flex();
+        flex.set_material("red blue");
+        flex.append_material("green");
+        assert_eq!(flex.material().collect::<Vec<_>>(), ["red", "blue", "green"]);
+
+        let skin = spec.add_skin();
+        skin.set_bodyname("upper lower");
+        assert_eq!(skin.bodyname().collect::<Vec<_>>(), ["upper", "lower"]);
+
+        let tuple = spec.add_tuple();
+        tuple.set_objname("");
+        assert_eq!(tuple.objname().count(), 0);
+
+        let material = spec.add_material();
+        material.set_texture(MjtTextureRoleBase::mjTEXROLE_RGBA, "floor");
+        let textures: Vec<_> = material.textures().collect();
+        assert_eq!(textures.len(), MjtTextureRole::mjNTEXROLE as usize);
+        for (role, texture) in textures.into_iter().enumerate() {
+            let expected = if role == MjtTextureRoleBase::mjTEXROLE_RGBA as usize { "floor" } else { "" };
+            assert_eq!(texture, expected, "texture of role {role}");
+        }
+
+        let texture = spec.add_texture();
+        texture.set_cubefile(MjtCubeFace::Back, "back.png");
+        let cubefiles: Vec<_> = texture.cubefiles().collect();
+        assert_eq!(cubefiles.len(), MjtCubeFace::Back as usize + 1);
+        for (face, file) in cubefiles.into_iter().enumerate() {
+            let expected = if face == MjtCubeFace::Back as usize { "back.png" } else { "" };
+            assert_eq!(file, expected, "file of face {face}");
+        }
     }
 
     /// Verifies `MjsFlex::cellcount` (read-only `&[i32; 3]`) and `order` (read-write `i32`)

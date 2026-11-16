@@ -43,7 +43,7 @@ impl<T> ::std::cmp::PartialEq for __BindgenUnionField<T> {
     }
 }
 impl<T> ::std::cmp::Eq for __BindgenUnionField<T> {}
-pub const mjVERSION_HEADER: u32 = 4000000;
+pub const mjVERSION_HEADER: u32 = 4000001;
 pub const mjMINVAL: f64 = 0.000000000000001;
 pub const mjMAXVAL: f64 = 10000000000.0;
 pub const mjPI: f64 = 3.141592653589793;
@@ -6216,6 +6216,12 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     pub fn mjs_getString(source: *const mjString) -> *const ::std::os::raw::c_char;
+}
+unsafe extern "C" {
+    pub fn mjs_getInStringVec(
+        source: *const mjStringVec,
+        i: ::std::os::raw::c_int,
+    ) -> *const ::std::os::raw::c_char;
 }
 unsafe extern "C" {
     pub fn mjs_getDouble(

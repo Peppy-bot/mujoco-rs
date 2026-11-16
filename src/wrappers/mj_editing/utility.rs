@@ -117,6 +117,24 @@ pub(crate) unsafe fn append_mjs_vec_vec_i32(source: &[i32], destination: *mut mj
     }
 }
 
+/// Reads the entries of an MJS string vector (C++) as `&str` items, in order.
+///
+/// # Safety
+/// `source` must point to a valid `mjStringVec` object for the duration `'a`, and the vector must
+/// not be written during `'a`, because a write reallocates the C++ buffers.
+///
+/// # Panics
+/// The iterator panics on an entry that contains invalid UTF-8.
+pub(crate) unsafe fn read_mjs_vec_string<'a>(source: *const mjStringVec) -> impl Iterator<Item = &'a str> {
+    (0..std::ffi::c_int::MAX).map_while(move |index| {
+        // SAFETY: the caller keeps `source` valid and unchanged for `'a`; MuJoCo returns null for
+        // an index past the last entry.
+        let entry = unsafe { mjs_getInStringVec(source, index) };
+        // SAFETY: a non-null `entry` points into the buffer of the C++ std::string, valid for `'a`.
+        (!entry.is_null()).then(|| unsafe { CStr::from_ptr(entry) }.to_str().unwrap())
+    })
+}
+
 /// Split `source` to entries and copy to `destination` (C++).
 ///
 /// # Safety
@@ -789,8 +807,24 @@ macro_rules! userdata_method {
 
 /// Implements vector of strings methods for given attribute $name.
 macro_rules! vec_string_set_append {
+    (@getter $name:ident; $comment:expr) => {
+        #[doc = concat!(
+            "Returns the entries of `", stringify!($name), "` in order: ", $comment,
+            "\n\n",
+            "# Panics\n",
+            "The iterator panics on an entry that contains invalid UTF-8."
+        )]
+        pub fn $name(&self) -> impl Iterator<Item = &str> {
+            // SAFETY: self.$name is a valid mjStringVec pointer, and no write reaches it while
+            // self is borrowed.
+            unsafe { read_mjs_vec_string(self.ffi().$name) }
+        }
+    };
+
     ($($name:ident; $comment:expr);* $(;)?) => {paste::paste!{
         $(
+            vec_string_set_append!(@getter $name; $comment);
+
             #[doc = concat!(
                 "Splits the `", stringify!($name), "` and put the split text as ", $comment,
                 "\n",
@@ -818,6 +852,8 @@ macro_rules! vec_string_set_append {
     // Indexed variant: the vector is pre-sized with one entry per enum variant, so an entry is
     // set by index rather than appended.
     ($name:ident[$role_ty:ty; $len:expr] => $singular:ident; $comment:expr $(;)?) => {paste::paste!{
+        vec_string_set_append!(@getter $name; $comment);
+
         #[doc = concat!(
             "Sets the entry at index `role` in `", stringify!($name), "` to `name`. ",
             $comment,
