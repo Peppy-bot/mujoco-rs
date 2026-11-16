@@ -11,6 +11,7 @@ unnecessary_lazy_evaluations = "allow"
 
 [package]
 name = "mujoco-rs"
+links = "mujoco"
 version = "8.0.0+mj-4.0.0"
 edition = "2024"
 license-file.workspace = true
@@ -50,6 +51,10 @@ name = "basic"
 path = "examples/simulation/basic.rs"
 
 [[example]]
+name = "batched"
+path = "examples/simulation/batched.rs"
+
+[[example]]
 name = "model_parameters"
 path = "examples/simulation/model_parameters.rs"
 
@@ -58,8 +63,8 @@ name = "logging"
 path = "examples/simulation/logging.rs"
 
 [[example]]
-name = "actuator_inputs"
-path = "examples/visualization/viewer/actuator_inputs.rs"
+name = "control_windows"
+path = "examples/visualization/viewer/control_windows.rs"
 required-features = ["viewer-ui"]
 
 [[example]]

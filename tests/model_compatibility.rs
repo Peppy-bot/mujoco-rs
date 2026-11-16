@@ -163,7 +163,8 @@ fn header_fields() -> (BTreeSet<String>, BTreeSet<String>) {
     } else {
         format!("{root}/mujoco/include/mujoco/mjxmacro.h")
     };
-    let header = std::fs::read_to_string(&path).unwrap_or_else(|err| panic!("cannot read {path}: {err}"));
+    let header = std::fs::read_to_string(&path).unwrap_or_else(|err| panic!("cannot read {path}: {err}"))
+        .replace("\r\n", "\n");  // Windows checkouts have CRLF line endings.
     let section = |start: &str, end: &str| {
         let from = header.find(start).unwrap();
         &header[from..from + header[from..].find(end).unwrap()]
