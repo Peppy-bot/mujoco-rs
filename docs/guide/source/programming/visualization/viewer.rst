@@ -31,11 +31,11 @@ inspection of joint state, and much more.
 
 A screenshot of the Rust 3D viewer is shown below.
 
-.. figure:: ../../../../img_common/viewer_spot.png
+.. figure:: ../../../../img_common/viewer_spot.gif
 
     Rust-native interactive 3D viewer.
     Showing the `Spot <https://github.com/google-deepmind/mujoco_menagerie/tree/main/boston_dynamics_spot>`_ scene from
-    `MuJoCo's menagerie <https://mujoco.readthedocs.io/en/4.0.0/models.html>`_.
+    `MuJoCo's menagerie <https://mujoco.readthedocs.io/en/4.0.1/models.html>`_.
 
 The viewer can be launched only in **passive mode**, i.e. it won't run as a separate application,
 and needs to be periodically "synced" by the user application.

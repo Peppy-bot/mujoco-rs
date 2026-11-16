@@ -15,8 +15,8 @@ pub type MjPluginLibraryLoadCallback =
 /// Loads a single MuJoCo plugin shared library. Wraps [`mj_loadPluginLibrary`].
 ///
 /// # Note
-/// A load failure is not reported here: on Unix MuJoCo calls `mju_error`, whose default handler
-/// prints the message and ends the process; on Windows MuJoCo discards the result.
+/// A load failure is not reported here: MuJoCo calls `mju_error`, whose default handler prints the
+/// message and ends the process.
 ///
 /// # Errors
 /// Returns [`MjPluginError`] if `path` is not valid UTF-8 or contains a null byte.
@@ -47,9 +47,8 @@ pub fn load_plugin_library<P: AsRef<Path>>(path: P) -> Result<(), MjPluginError>
 /// Pass `None` for `callback` to omit per-library notification.
 ///
 /// # Note
-/// A library in `directory` that the loader refuses is not reported here: on Unix MuJoCo calls
-/// `mju_error`, whose default handler prints the message and ends the process; on Windows MuJoCo
-/// discards the result.
+/// A library in `directory` that fails to load is not reported here: MuJoCo skips it with a
+/// warning (`mju_warning`) and loads the other libraries. `callback` is not called for it.
 ///
 /// # Errors
 /// Returns [`MjPluginError`] if `directory` is not valid UTF-8 or contains a null byte.
@@ -100,6 +99,30 @@ mod tests {
             .join("bin/mujoco_plugin");
 
         load_all_plugin_libraries(&plugin_dir, None).expect("plugin dir should load");
+    }
+
+    /// A library that fails to load is skipped: the call returns and the callback is not called
+    /// for it.
+    #[test]
+    fn load_all_plugin_libraries_skips_a_library_that_fails_to_load() {
+        use std::ffi::{c_char, c_int};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        static CALLBACKS: AtomicUsize = AtomicUsize::new(0);
+        unsafe extern "C" fn count_callback(_filename: *const c_char, _first: c_int, _count: c_int) {
+            CALLBACKS.fetch_add(1, Ordering::SeqCst);
+        }
+
+        let suffix = if cfg!(windows) { "dll" } else if cfg!(target_os = "macos") { "dylib" } else { "so" };
+        let dir = std::env::temp_dir().join(format!("mujoco-rs-unloadable-plugin-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(format!("not_a_library.{suffix}")), b"not a shared library").unwrap();
+
+        let result = load_all_plugin_libraries(&dir, Some(count_callback));
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        assert!(result.is_ok());
+        assert_eq!(CALLBACKS.load(Ordering::SeqCst), 0);
     }
 
     #[test]

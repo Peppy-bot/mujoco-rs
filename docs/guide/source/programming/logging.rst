@@ -6,7 +6,7 @@ Logging
 
 MuJoCo uses its own logging system, more in detail described in
 `their documentation (C code guide)
-<https://mujoco.readthedocs.io/en/4.0.0/programming/simulation.html#errors-warnings-logging>`__.
+<https://mujoco.readthedocs.io/en/4.0.1/programming/simulation.html#errors-warnings-logging>`__.
 
 
 Pure wrappers
@@ -70,6 +70,8 @@ An example (using the `env_logger <https://docs.rs/env_logger/0.11.11/env_logger
         log_warning("the log backend receives this, with the target 'mujoco'");
     }
 
+
+Run the example with ``RUST_LOG=warn``, because ``env_logger`` displays only errors by default.
 
 In the above example, the ``log``'s target is set to the Rust-module path when called from the user's code.
 The message is displayed in a format similar to the following:
