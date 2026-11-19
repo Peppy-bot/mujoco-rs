@@ -1,0 +1,590 @@
+name: Sync with the base repository
+
+# Once a week, this workflow brings `main` up to date with the repository this
+# fork was made from (davidhozic/mujoco-rs) and with the head of the branch
+# the `mujoco` submodule tracks on Peppy-bot/mujoco. It then opens a pull
+# request on Peppy-bot/private-nodes-hub that moves the waldo node's pin of
+# this crate.
+#
+# The merge is automatic. A conflict goes to Claude Code, which resolves it in
+# the working tree; the workflow stages and commits what Claude wrote, so the
+# resolution is always visible in the merge commit. The result is built and
+# tested before `main` moves, and a failed build goes back to Claude for at
+# most two repair attempts. Two outcomes leave `main` where it is and open a
+# pull request on this repository instead: the verification still failing
+# after the repairs, and the merge changing the MuJoCo release the crate
+# binds, which needs the version bump checklist that a person runs. While
+# that pull request is open, the weekly run does nothing. The waldo pull
+# request is never merged here: a person reviews and merges it.
+#
+# The job runs on a self-hosted box because `claude` and a warm cargo cache
+# live there, and because `main` is pushed with a personal token so the tests
+# workflow runs on the pushed commits (a push made with the run's own
+# GITHUB_TOKEN starts no workflow). Secrets: UPSTREAM_SYNC_TOKEN, a token
+# with contents and pull-request write access to this repository and to
+# Peppy-bot/private-nodes-hub; and ANTHROPIC_API_KEY or
+# CLAUDE_CODE_OAUTH_TOKEN for Claude Code, without which the box's own
+# `claude` login is used. The repository variable SYNC_CLAUDE_MODEL names the
+# model; unset, Claude Code's default applies.
+on:
+  schedule:
+    # Monday 06:00 UTC, so the result is there at the start of the week.
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Merge and verify on the runner only: push nothing, open no pull request"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# Two syncs at once would race each other to push `main`; a run in flight
+# finishes first.
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: "Merge upstream main and the submodule head, then move waldo's pin"
+    runs-on: self-hosted
+    # A cold run compiles every dependency, and a hard conflict can take a
+    # Claude turn of 45 minutes, twice more if the verification needs repairs.
+    timeout-minutes: 180
+
+    env:
+      RUST_BACKTRACE: "1"
+      # Every feature a dynamic link supports; the verification builds with
+      # all of them so a conflict in viewer or renderer code is compiled too.
+      MJRS_SYNC_FEATURES: "auto-download-mujoco renderer renderer-winit-fallback viewer-ui"
+      HUB_REPOSITORY: Peppy-bot/private-nodes-hub
+      # The hub branch the waldo pull request lives on: one branch, updated
+      # in place, so the weekly runs never pile up pull requests.
+      HUB_BRANCH: sync/mujoco-rs
+      # The branch a sync that needs a person is pushed to.
+      HANDOFF_BRANCH: sync/upstream
+      DRY_RUN: ${{ inputs.dry_run == true }}
+      CLAUDE_MODEL: ${{ vars.SYNC_CLAUDE_MODEL }}
+      # Every step appends what it did here; the summary and the pull request
+      # bodies are assembled from it.
+      SYNC_NOTES: ${{ runner.temp }}/sync-notes.md
+      GIT_AUTHOR_NAME: github-actions[bot]
+      GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+      GIT_COMMITTER_NAME: github-actions[bot]
+      GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          # The merge needs the whole history of both sides.
+          fetch-depth: 0
+          # The steps that push name the token themselves, so no credential
+          # sits in .git/config for Claude Code to inherit.
+          persist-credentials: false
+
+      # The runner's shell is neither a login nor an interactive one, so cargo
+      # and the native `claude` install are named on $GITHUB_PATH by hand.
+      - name: Check the host's toolchain
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          UPSTREAM_SYNC_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
+          missing=()
+          for tool in git gh jq rustc cargo claude; do
+            command -v "$tool" > /dev/null || missing+=("$tool")
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            list=$(printf '%s, ' "${missing[@]}")
+            echo "::error::${RUNNER_NAME:-this host} is missing ${list%, }." \
+              "Self-hosted boxes are provisioned with the Peppy superproject's" \
+              "scripts/setup_machine.sh --ci-runner; claude and gh must be on the box too."
+            exit 1
+          fi
+          rustc --version
+          claude --version
+          if [ -z "$ANTHROPIC_API_KEY" ] && [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
+            echo "::notice::Neither ANTHROPIC_API_KEY nor CLAUDE_CODE_OAUTH_TOKEN is set; Claude Code uses the box's own login."
+          fi
+          if [ -z "$UPSTREAM_SYNC_TOKEN" ] && [ "$DRY_RUN" != true ]; then
+            echo "::error::The UPSTREAM_SYNC_TOKEN secret is not set; it pushes main and opens the pull requests."
+            exit 1
+          fi
+          : > "$SYNC_NOTES"
+
+      # The same per-box, per-month cache the static-link job keeps, under a
+      # prefix of its own so neither job prunes the other's directory. It
+      # holds the cargo target directory and the MuJoCo release the build
+      # script fetches; both are rebuilt or refetched from scratch when absent.
+      - name: Name the cache this run reuses
+        run: |
+          set -euo pipefail
+          root="$HOME/.cache/mujoco-rs-ci"
+          prefix="upstream-sync-$RUNNER_ARCH-"
+          keep="$root/$prefix$(date -u +%Y-%m)"
+          mkdir -p "$keep/target" "$keep/mujoco"
+          for dir in "$root/$prefix"*; do
+            if [ -d "$dir" ] && [ "$dir" != "$keep" ]; then
+              echo "Pruning stale cache $dir"
+              rm -rf "$dir"
+            fi
+          done
+          ln -sfn "$keep/target" target
+          echo "CARGO_INCREMENTAL=0" >> "$GITHUB_ENV"
+          echo "MUJOCO_DOWNLOAD_DIR=$keep/mujoco" >> "$GITHUB_ENV"
+
+      # The base repository comes from GitHub's fork record, so nothing here
+      # names it twice. The submodule's branch and URL come from .gitmodules,
+      # and its head from `ls-remote`, so no clone of MuJoCo is needed. A
+      # newer `release/X.Y.Z-static` branch on the fork is reported only: a
+      # MuJoCo bump regenerates the bindings, which is a person's job.
+      - name: Compare main with the base repository and the submodule's branch
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          waiting=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$HANDOFF_BRANCH" --state open --json url --jq '.[0].url // empty')
+          if [ -n "$waiting" ]; then
+            echo "::warning::An earlier sync waits for review at $waiting. Merge or close it; this run does nothing."
+            echo "An earlier sync waits for review at $waiting. This run did nothing." >> "$GITHUB_STEP_SUMMARY"
+            echo "action=blocked" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          upstream=$(gh api "repos/$GITHUB_REPOSITORY" --jq '.parent.full_name // empty')
+          if [ -z "$upstream" ]; then
+            echo "::error::$GITHUB_REPOSITORY is not a fork, so there is no base repository to synchronize with."
+            exit 1
+          fi
+          # The box reuses the checkout, so the remote may exist from a
+          # previous run.
+          git remote remove upstream 2> /dev/null || true
+          git remote add upstream "https://github.com/$upstream.git"
+          git fetch --no-tags upstream main
+          upstream_sha=$(git rev-parse upstream/main)
+          behind=$(git rev-list --count HEAD..upstream/main)
+          ahead=$(git rev-list --count upstream/main..HEAD)
+
+          branch=$(git config -f .gitmodules submodule.mujoco.branch)
+          url=$(git config -f .gitmodules submodule.mujoco.url)
+          submodule_old=$(git rev-parse HEAD:mujoco)
+          submodule_new=$(git ls-remote --exit-code "$url" "refs/heads/$branch" | cut -f 1)
+          tracked=${branch#release/}
+          tracked=${tracked%-static}
+          newest=$(git ls-remote --heads "$url" 'refs/heads/release/*-static' \
+            | sed 's|.*refs/heads/release/||; s|-static$||' | sort -V | tail -n 1)
+          if [ -n "$newest" ] && [ "$newest" != "$tracked" ]; then
+            echo "::notice::$url has release/$newest-static while the submodule tracks $branch. A MuJoCo bump is a manual job (see the version bump checklist)."
+            printf -- '- %s has `release/%s-static` while the submodule tracks `%s`; a MuJoCo bump is a manual job.\n' "$url" "$newest" "$branch" >> "$SYNC_NOTES"
+          fi
+
+          {
+            echo "upstream=$upstream"
+            echo "upstream_sha=$upstream_sha"
+            echo "behind=$behind"
+            echo "submodule_branch=$branch"
+            echo "submodule_url=$url"
+            echo "submodule_old=$submodule_old"
+            echo "submodule_new=$submodule_new"
+            echo "head_before=$(git rev-parse HEAD)"
+          } >> "$GITHUB_OUTPUT"
+          echo "main is $ahead ahead of and $behind behind $upstream main ($upstream_sha)."
+          echo "The submodule points at $submodule_old; $branch is at $submodule_new."
+          if [ "$behind" = 0 ] && [ "$submodule_old" = "$submodule_new" ]; then
+            echo "action=none" >> "$GITHUB_OUTPUT"
+            printf 'main is in sync with %s main (`%s`) and the submodule is at the head of `%s` (`%s`). Nothing to do.\n' \
+              "$upstream" "${upstream_sha:0:12}" "$branch" "${submodule_new:0:12}" >> "$GITHUB_STEP_SUMMARY"
+            cat "$SYNC_NOTES" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "action=sync" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The gitlink moves without a clone of the submodule: the verification
+      # links the official release, and the static-link job checks the tree
+      # out on the pushed commit.
+      - name: Move the mujoco submodule to the head of its branch
+        if: steps.plan.outputs.action == 'sync' && steps.plan.outputs.submodule_old != steps.plan.outputs.submodule_new
+        env:
+          OLD: ${{ steps.plan.outputs.submodule_old }}
+          NEW: ${{ steps.plan.outputs.submodule_new }}
+          BRANCH: ${{ steps.plan.outputs.submodule_branch }}
+          URL: ${{ steps.plan.outputs.submodule_url }}
+        run: |
+          set -euo pipefail
+          repository=${URL#https://github.com/}
+          repository=${repository%.git}
+          compare="https://github.com/$repository/compare/$OLD...$NEW"
+          git update-index --cacheinfo "160000,$NEW,mujoco"
+          git commit --quiet \
+            -m "Move the mujoco submodule to $BRANCH at ${NEW:0:12}" \
+            -m "$repository@${OLD:0:12}...${NEW:0:12}: $compare"
+          printf -- '- The `mujoco` submodule moved from `%s` to `%s`, the head of `%s` (%s).\n' \
+            "${OLD:0:12}" "${NEW:0:12}" "$BRANCH" "$compare" >> "$SYNC_NOTES"
+
+      # A clean merge is committed with the message prepared here. A conflict
+      # is handed to Claude Code with the list of files and the fork's own
+      # commits for context; Claude may edit and run cargo but not git's
+      # writing commands, so the workflow stages and commits the resolution
+      # and records Claude's summary in the merge commit's body. A file that
+      # still holds a marker afterwards fails the run.
+      - name: Merge the base repository's main
+        if: steps.plan.outputs.action == 'sync' && steps.plan.outputs.behind != '0'
+        id: merge
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          UPSTREAM: ${{ steps.plan.outputs.upstream }}
+          UPSTREAM_SHA: ${{ steps.plan.outputs.upstream_sha }}
+          BEHIND: ${{ steps.plan.outputs.behind }}
+          RESOLVE_SCHEMA: '{"type":"object","properties":{"resolved":{"type":"boolean"},"summary":{"type":"string"},"unresolved":{"type":"array","items":{"type":"string"}}},"required":["resolved","summary","unresolved"]}'
+        run: |
+          set -euo pipefail
+          release() { sed -n 's/^version *= *"[^"]*+mj-\([0-9.]*\)".*/\1/p' Cargo.toml; }
+          echo "mujoco_before=$(release)" >> "$GITHUB_OUTPUT"
+          fork_sha=$(git rev-parse HEAD)
+          base=$(git merge-base HEAD upstream/main)
+          compare="https://github.com/$UPSTREAM/compare/$base...$UPSTREAM_SHA"
+          message="$RUNNER_TEMP/merge-message"
+          printf 'Merge %s main (%s) into main\n\nBrings in %s upstream commits through the weekly sync: %s\n' \
+            "$UPSTREAM" "${UPSTREAM_SHA:0:12}" "$BEHIND" "$compare" > "$message"
+          printf -- '- Merged %s commits from %s main (`%s`): %s\n' \
+            "$BEHIND" "$UPSTREAM" "${UPSTREAM_SHA:0:12}" "$compare" >> "$SYNC_NOTES"
+
+          if git merge --no-ff --no-edit --file "$message" upstream/main; then
+            echo "conflicts=" >> "$GITHUB_OUTPUT"
+            echo "mujoco_after=$(release)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          conflicted=$(git diff --name-only --diff-filter=U)
+          if [ -z "$conflicted" ]; then
+            echo "::error::git merge failed without a conflict to resolve; see its output above."
+            exit 1
+          fi
+          echo "Conflicts in:"
+          echo "$conflicted"
+          fork_commits=$(git log --oneline --no-merges --max-count=50 upstream/main..HEAD)
+
+          resolution=$(.github/scripts/claude-structured.sh edit "$RESOLVE_SCHEMA" 30 <<PROMPT
+          The weekly sync workflow is merging the base repository $UPSTREAM (branch main, commit $UPSTREAM_SHA) into this fork, $GITHUB_REPOSITORY (branch main, commit $fork_sha). 'git merge upstream/main' stopped on conflicts in these files:
+
+          $conflicted
+
+          The fork carries these commits that the base repository does not have:
+
+          $fork_commits
+
+          Resolve every conflict in the working tree. Keep the upstream change and re-apply what the fork's commit intended on top of it. When the two sides are alternative implementations of the same fix, keep the upstream one and say so in the summary. Read git log, git show and git diff of both sides for context. Leave no conflict marker behind. Edit only what the resolution needs. Do not edit src/mujoco_c.rs beyond keeping one side whole: it is generated. Check the result with: cargo check --features "$MJRS_SYNC_FEATURES" (MUJOCO_DOWNLOAD_DIR is set, so the first check fetches MuJoCo). Do not run git add, git commit, git merge, git checkout, git reset or git push: the workflow stages and commits the resolution.
+
+          When you are done, reply with the JSON object the schema asks for. 'resolved' is true only when every file above is free of conflict markers and the check passes. 'summary' states, in plain English, what each conflict was and how you resolved it. 'unresolved' lists the files you could not resolve, each with the reason.
+          PROMPT
+          )
+          summary=$(jq -r '.summary' <<< "$resolution")
+          echo "$summary"
+          if [ "$(jq -r '.resolved' <<< "$resolution")" != true ]; then
+            echo "::error::Claude Code could not resolve the merge: $(jq -r '.unresolved | join("; ")' <<< "$resolution")"
+            exit 1
+          fi
+          leftover=$(echo "$conflicted" | xargs grep -l -E '^(<<<<<<<|>>>>>>>) ' -- 2> /dev/null || true)
+          if [ -n "$leftover" ]; then
+            echo "::error::Conflict markers remain in: $(echo "$leftover" | paste -sd ' ')"
+            exit 1
+          fi
+          git add -A
+          if git diff --cached --name-only --diff-filter=U | grep -q .; then
+            echo "::error::Unmerged paths remain after the resolution."
+            exit 1
+          fi
+          files=$(echo "$conflicted" | paste -sd ' ')
+          printf '\nConflicts in %s were resolved by Claude Code:\n%s\n' "$files" "$summary" >> "$message"
+          git commit --quiet --file "$message"
+          echo "conflicts=$files" >> "$GITHUB_OUTPUT"
+          echo "mujoco_after=$(release)" >> "$GITHUB_OUTPUT"
+          printf -- '- Conflicts in %s were resolved by Claude Code: %s\n' "$files" "$summary" >> "$SYNC_NOTES"
+
+      # The build links the official MuJoCo release the crate names, so a
+      # submodule move alone is not exercised here; the static-link job does
+      # that on the pushed commit. A failure goes back to Claude Code with the
+      # tail of the log, at most twice; each repair is a commit of its own.
+      - name: Verify that the result builds and its tests pass
+        if: steps.plan.outputs.action == 'sync'
+        id: verify
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          UPSTREAM: ${{ steps.plan.outputs.upstream }}
+          UPSTREAM_SHA: ${{ steps.plan.outputs.upstream_sha }}
+          REPAIR_SCHEMA: '{"type":"object","properties":{"fixed":{"type":"boolean"},"summary":{"type":"string"}},"required":["fixed","summary"]}'
+        run: |
+          set -euo pipefail
+          release=$(sed -n 's/^version *= *"[^"]*+mj-\([0-9.]*\)".*/\1/p' Cargo.toml)
+          export LD_LIBRARY_PATH="$MUJOCO_DOWNLOAD_DIR/mujoco-$release/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          command="cargo build --features \"$MJRS_SYNC_FEATURES\" && cargo test --features \"$MJRS_SYNC_FEATURES\""
+          log="$RUNNER_TEMP/verify.log"
+          verified=false
+          for attempt in 1 2 3; do
+            echo "::group::Attempt $attempt: $command"
+            if bash -o pipefail -c "$command" > "$log" 2>&1; then
+              tail -n 20 "$log"
+              echo "::endgroup::"
+              verified=true
+              break
+            fi
+            tail -n 120 "$log"
+            echo "::endgroup::"
+            if [ "$attempt" = 3 ]; then
+              break
+            fi
+            if ! repair=$(.github/scripts/claude-structured.sh edit "$REPAIR_SCHEMA" 30 <<PROMPT
+          The weekly sync workflow merged the base repository $UPSTREAM main ($UPSTREAM_SHA) into this fork, $GITHUB_REPOSITORY main, and committed the result (HEAD $(git rev-parse HEAD)). The verification command
+
+              $command
+
+          then failed. The last lines of its output:
+
+          $(tail -n 120 "$log")
+
+          Find the cause and fix it in the working tree so that the command passes. Keep the upstream changes and the fork's intent: revert neither side wholesale, and do not edit src/mujoco_c.rs (generated). Do not run git add, git commit, git checkout, git reset or git push: the workflow commits your fix.
+
+          When you are done, reply with the JSON object the schema asks for. 'fixed' is true only when the command passes. 'summary' states, in plain English, what was broken and what you changed.
+          PROMPT
+            ); then
+              echo "::warning::Claude Code could not attempt a repair; the result goes to a pull request."
+              break
+            fi
+            summary=$(jq -r '.summary' <<< "$repair")
+            echo "$summary"
+            if git diff --quiet && [ -z "$(git ls-files --others --exclude-standard)" ]; then
+              echo "Claude Code changed nothing, so another attempt would fail the same way."
+              break
+            fi
+            git add -A
+            git commit --quiet -m "Fix the build after the upstream sync (repair $attempt)" -m "$summary"
+            printf -- '- Repair after a failed verification (`%s`): %s\n' "$(git rev-parse --short=12 HEAD)" "$summary" >> "$SYNC_NOTES"
+          done
+          echo "verified=$verified" >> "$GITHUB_OUTPUT"
+          if [ "$verified" != true ]; then
+            echo "::error::The build or the tests still fail; the log is above."
+          fi
+
+      # `main` moves only when the verification passed and the MuJoCo release
+      # did not change. Otherwise the result goes to the hand-off branch and a
+      # pull request that a person finishes. The token reaches git through a
+      # credential helper that reads it from the environment, so it appears on
+      # no command line; the empty `credential.helper=` first drops whatever
+      # helper the box has configured.
+      - name: Push main, or hand the result to a pull request
+        if: steps.plan.outputs.action == 'sync'
+        id: push
+        env:
+          GH_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
+          GIT_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
+          UPSTREAM: ${{ steps.plan.outputs.upstream }}
+          HEAD_BEFORE: ${{ steps.plan.outputs.head_before }}
+          VERIFIED: ${{ steps.verify.outputs.verified }}
+          MUJOCO_BEFORE: ${{ steps.merge.outputs.mujoco_before }}
+          MUJOCO_AFTER: ${{ steps.merge.outputs.mujoco_after }}
+        run: |
+          set -euo pipefail
+          reasons=()
+          if [ -n "$MUJOCO_AFTER" ] && [ "$MUJOCO_BEFORE" != "$MUJOCO_AFTER" ]; then
+            reasons+=("the merge moves the crate from MuJoCo $MUJOCO_BEFORE to $MUJOCO_AFTER, which needs the version bump checklist in .claude/rules/important-context.md (submodule branch, bindings, docs)")
+          fi
+          if [ "$VERIFIED" != true ]; then
+            reasons+=("the build or the tests still fail after the repair attempts (see the verification step of the run)")
+          fi
+          head=$(git rev-parse HEAD)
+          run="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          echo "head=$head" >> "$GITHUB_OUTPUT"
+          echo "Commits on top of ${HEAD_BEFORE:0:12}:"
+          git log --oneline --first-parent "$HEAD_BEFORE..HEAD"
+
+          if [ "$DRY_RUN" = true ]; then
+            {
+              printf 'Dry run: main would move from `%s` to `%s`' "${HEAD_BEFORE:0:12}" "${head:0:12}"
+              if [ ${#reasons[@]} -gt 0 ]; then
+                printf ', except that %s' "$(printf '%s; ' "${reasons[@]}")"
+              fi
+              printf '.\n'
+              cat "$SYNC_NOTES"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          push() {
+            git -c credential.helper= \
+              -c 'credential.helper=!f() { echo username=x-access-token; echo "password=$GIT_TOKEN"; }; f' \
+              push "$@"
+          }
+          if [ ${#reasons[@]} -eq 0 ]; then
+            push origin HEAD:refs/heads/main
+            echo "pushed=true" >> "$GITHUB_OUTPUT"
+            {
+              printf 'main moved from `%s` to `%s`.\n' "${HEAD_BEFORE:0:12}" "${head:0:12}"
+              cat "$SYNC_NOTES"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          push --force origin "HEAD:refs/heads/$HANDOFF_BRANCH"
+          body="$RUNNER_TEMP/handoff-body.md"
+          {
+            printf '## Summary\n\n'
+            printf 'The weekly sync (%s) merged the base repository into `main` but did not push it, because:\n\n' "$run"
+            printf -- '- %s\n' "${reasons[@]}"
+            printf '\nWhat the sync did:\n\n'
+            cat "$SYNC_NOTES"
+            printf '\n## What to do\n\n'
+            printf 'Finish the work on this branch, then merge this pull request by hand. The weekly run does nothing while it is open.\n'
+          } > "$body"
+          url=$(gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$HANDOFF_BRANCH" \
+            --title "Sync main with $UPSTREAM (needs a person)" --body-file "$body")
+          echo "pushed=false" >> "$GITHUB_OUTPUT"
+          {
+            printf 'main did not move. A pull request waits for review at %s because:\n\n' "$url"
+            printf -- '- %s\n' "${reasons[@]}"
+            cat "$SYNC_NOTES"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$VERIFIED" != true ]; then
+            exit 1
+          fi
+
+      # waldo pins this crate through its Cargo.lock: a git source with no
+      # rev, so the pin is the commit the lockfile records. The lockfile is
+      # repinned by hand (pin-git-dependency.sh) because the hub's workspaces
+      # depend on crates that only a running peppy daemon generates, so cargo
+      # cannot resolve them on this box. That edit equals `cargo update -p
+      # mujoco-rs` unless this crate's own dependency declarations changed
+      # between the two pins; the two manifests are compared and the pull
+      # request says when a real relock is due. Claude Code writes the plain
+      # English explanation from the commits, with read access to waldo's
+      # sources so it can say whether anything waldo calls changed.
+      - name: Open or update the pull request that moves waldo's pin
+        if: steps.push.outputs.pushed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
+          GIT_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          HEAD: ${{ steps.push.outputs.head }}
+          HEAD_BEFORE: ${{ steps.plan.outputs.head_before }}
+          UPSTREAM: ${{ steps.plan.outputs.upstream }}
+          EXPLAIN_SCHEMA: '{"type":"object","properties":{"explanation":{"type":"string"},"action_needed":{"type":"boolean"},"action":{"type":"string"}},"required":["explanation","action_needed","action"]}'
+        run: |
+          set -euo pipefail
+          with_token() {
+            git -c credential.helper= \
+              -c 'credential.helper=!f() { echo username=x-access-token; echo "password=$GIT_TOKEN"; }; f' \
+              "$@"
+          }
+          run="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          source="https://github.com/$GITHUB_REPOSITORY.git"
+          hub="$RUNNER_TEMP/private-nodes-hub"
+          rm -rf "$hub"
+          with_token clone --quiet --depth 1 --branch main "https://github.com/$HUB_REPOSITORY.git" "$hub"
+          git -C "$hub" checkout --quiet -b "$HUB_BRANCH"
+          lock="$hub/waldo/Cargo.lock"
+
+          old=$(sed -n "s|^source = \"git+$source#\([0-9a-f]*\)\"|\1|p" "$lock" | sort -u)
+          if [ -z "$old" ]; then
+            echo "::error::$HUB_REPOSITORY waldo/Cargo.lock names no package from $source."
+            exit 1
+          fi
+          if [ "$(echo "$old" | wc -l)" != 1 ]; then
+            echo "::error::$HUB_REPOSITORY waldo/Cargo.lock pins $source at more than one commit: $(echo "$old" | paste -sd ' ')."
+            exit 1
+          fi
+          old_version=$(awk -v source="$source" 'BEGIN { RS = "" }
+            index($0, "name = \"mujoco-rs\"\n") && index($0, source) && match($0, /version = "[^"]+"/) {
+              print substr($0, RSTART + 11, RLENGTH - 12)
+            }' "$lock")
+          if [ "$old" = "$HEAD" ]; then
+            printf 'waldo already pins `%s`; no pull request needed.\n' "${HEAD:0:12}" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          versions=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | "\(.name)=\(.version)"')
+          new_version=$(echo "$versions" | sed -n 's/^mujoco-rs=//p')
+          # shellcheck disable=SC2086
+          repinned=$(.github/scripts/pin-git-dependency.sh "$lock" "$source" "$HEAD" $versions | paste -sd ' ')
+          echo "Repinned in waldo/Cargo.lock: $repinned"
+
+          # The commit waldo pinned may predate this clone's main (a pull
+          # request head that was merged with a merge commit still is an
+          # ancestor; a rebased one is not), so the range falls back to what
+          # this run pushed.
+          if git cat-file -e "$old^{commit}" 2> /dev/null; then
+            range="$old..$HEAD"
+          else
+            range="$HEAD_BEFORE..$HEAD"
+          fi
+          relock=false
+          if git cat-file -e "$old^{commit}" 2> /dev/null; then
+            previous="$RUNNER_TEMP/mujoco-rs-at-$old"
+            git worktree add --quiet --detach "$previous" "$old"
+            declared() {
+              cargo metadata --no-deps --format-version 1 --manifest-path "$1/Cargo.toml" \
+                | jq -S '[.packages[] | {name, dependencies: [.dependencies[] | {name, req, kind, target, optional, features, uses_default_features}]}]'
+            }
+            if ! diff <(declared "$previous") <(declared "$PWD") > /dev/null; then
+              relock=true
+            fi
+            git worktree remove --force "$previous"
+          fi
+
+          explanation=$(CLAUDE_ADD_DIRS="$hub/waldo" .github/scripts/claude-structured.sh read "$EXPLAIN_SCHEMA" 5 <<PROMPT
+          The waldo project, a Rust workspace at $hub/waldo (its sim_mujoco crate and hand_teleop plugin use this crate), depends on this repository, $GITHUB_REPOSITORY, through a git dependency that its Cargo.lock pins at commit $old ($old_version). A pull request now moves the pin to commit $HEAD ($new_version), the current main, which the weekly sync just pushed. What main took between the two pins:
+
+          $(cat "$SYNC_NOTES")
+
+          Write the pull request's explanation for waldo's maintainers in plain English: what changed in mujoco-rs, and why waldo should take it. Use git log $range, git diff --stat $range and the changelog under docs/guide/source/ for the facts. Read waldo's code under $hub/waldo (available read-only) to say whether anything waldo calls changed its name, signature or behaviour. Name public items in backticks; keep the text under 250 words; do not list every commit; do not repeat the commit hashes.
+
+          Reply with the JSON object the schema asks for. 'explanation' is the text. 'action_needed' is true when waldo's code must change before it compiles or behaves the same, and 'action' then says what; otherwise 'action' is an empty string.
+          PROMPT
+          )
+
+          body="$RUNNER_TEMP/waldo-body.md"
+          {
+            printf '## Summary\n\n'
+            printf 'Moves waldo'"'"'s pin of %s from `%s` (`%s`) to `%s` (`%s`), the head of `main` after the weekly sync (%s).\n\n' \
+              "$GITHUB_REPOSITORY" "${old:0:12}" "$old_version" "${HEAD:0:12}" "$new_version" "$run"
+            jq -r '.explanation' <<< "$explanation"
+            printf '\n'
+            if [ "$(jq -r '.action_needed' <<< "$explanation")" = true ]; then
+              printf '\n**Action needed before merging**: %s\n' "$(jq -r '.action' <<< "$explanation")"
+            fi
+            printf '\n### What the sync took\n\n'
+            cat "$SYNC_NOTES"
+            printf '\n### What changes here\n\n'
+            printf '`waldo/Cargo.lock`: the %s entries only.' "$repinned"
+            if [ "$relock" = true ]; then
+              printf ' The dependency declarations of %s changed between the two pins, so `cargo test --locked` may report a stale lockfile: run `scripts/relock.sh` and commit what it rewrites.' "$GITHUB_REPOSITORY"
+            fi
+            printf '\n\nThis pull request is not merged automatically: review it and merge it by hand.\n'
+            printf '\n## Test plan\n\n'
+            printf -- '- [ ] CI: the waldo workspace builds and tests with `--locked` against the new pin\n'
+            printf '\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n'
+          } > "$body"
+
+          git -C "$hub" add waldo/Cargo.lock
+          git -C "$hub" commit --quiet \
+            -m "Move waldo's mujoco-rs pin to ${HEAD:0:12}" \
+            -m "$GITHUB_REPOSITORY@${old:0:12}...${HEAD:0:12} ($old_version to $new_version), from the weekly sync: $run"
+          with_token -C "$hub" push --force origin "HEAD:refs/heads/$HUB_BRANCH"
+          title="Move waldo's mujoco-rs pin to ${HEAD:0:12}"
+          number=$(gh pr list --repo "$HUB_REPOSITORY" --head "$HUB_BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$number" ]; then
+            gh pr edit "$number" --repo "$HUB_REPOSITORY" --title "$title" --body-file "$body" > /dev/null
+            url=$(gh pr view "$number" --repo "$HUB_REPOSITORY" --json url --jq '.url')
+          else
+            url=$(gh pr create --repo "$HUB_REPOSITORY" --base main --head "$HUB_BRANCH" --title "$title" --body-file "$body")
+          fi
+          printf 'waldo pull request: %s (merge it by hand).\n' "$url" >> "$GITHUB_STEP_SUMMARY"
